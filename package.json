@@ -1,0 +1,7 @@
+{
+  "name": "jhmg-divi-to-elementor",
+  "private": true,
+  "scripts": {
+    "test:php": "vendor/bin/phpunit"
+  }
+}

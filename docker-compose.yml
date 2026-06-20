@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+    volumes:
+      - db_data:/var/lib/mysql
+
+  wordpress:
+    image: wordpress:6.2-php8.1-apache
+    depends_on:
+      - db
+    ports:
+      - "8001:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - ./plugin/jhmg-converter-divi-to-elementor:/var/www/html/wp-content/plugins/jhmg-converter-divi-to-elementor:delegated
+      - /Users/Lucas/Documents/JHMG-Local/jhmg-elementor-to-divi5/references/Divi:/var/www/html/wp-content/themes/Divi:delegated
+      - /Users/Lucas/Documents/JHMG-Local/jhmg-elementor-to-divi5/references/elementor4.1.3.zip:/tmp/elementor4.1.3.zip:ro
+      - ./fixtures:/var/www/html/fixtures:ro
+      - wp_uploads:/var/www/html/wp-content/uploads
+    entrypoint: >
+      bash -c "
+        mkdir -p /var/www/html/wp-content/uploads &&
+        chown -R www-data:www-data /var/www/html/wp-content/uploads &&
+        exec docker-entrypoint.sh apache2-foreground
+      "
+
+volumes:
+  db_data:
+  wp_uploads:

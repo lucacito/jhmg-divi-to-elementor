@@ -1,0 +1,15 @@
+{
+  "require-dev": {
+    "phpunit/phpunit": "^13.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "DiviElementorConverter\\": "plugin/jhmg-converter-divi-to-elementor/includes/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "DiviElementorConverter\\Tests\\": "tests/"
+    }
+  }
+}
