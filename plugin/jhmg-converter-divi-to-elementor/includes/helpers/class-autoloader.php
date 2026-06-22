@@ -18,7 +18,7 @@ class Autoloader {
             $relative_class = ltrim( substr( $class, strlen( $prefix ) ), '\\' );
             $parts          = explode( '\\', $relative_class );
             $class_name     = array_pop( $parts );
-            $directory      = DEC_PLUGIN_DIR . 'includes/';
+            $directory      = JHMGCOFO_PLUGIN_DIR . 'includes/';
 
             if ( ! empty( $parts ) ) {
                 $directory .= implode( '/', array_map( 'strtolower', $parts ) ) . '/';
@@ -28,7 +28,7 @@ class Autoloader {
             $path      = $directory . $file_name;
 
             if ( ! file_exists( $path ) && empty( $parts ) ) {
-                $path = DEC_PLUGIN_DIR . 'includes/helpers/' . $file_name;
+                $path = JHMGCOFO_PLUGIN_DIR . 'includes/helpers/' . $file_name;
             }
 
             if ( file_exists( $path ) ) {
