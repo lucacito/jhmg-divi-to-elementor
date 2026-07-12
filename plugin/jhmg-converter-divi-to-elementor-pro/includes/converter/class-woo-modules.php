@@ -32,9 +32,10 @@ class WooModules {
 		'wc_description'      => 'woocommerce-product-short-description',
 		'wc_add_to_cart'      => 'woocommerce-product-add-to-cart',
 		'wc_rating'           => 'woocommerce-product-rating',
-		'wc_reviews'          => 'woocommerce-product-comments',
+		// Elementor Pro has no standalone reviews widget; reviews render inside the Product Data Tabs widget.
+		'wc_reviews'          => 'woocommerce-product-data-tabs',
 		'wc_breadcrumb'       => 'woocommerce-breadcrumb',
-		'wc_additional_info'  => 'woocommerce-product-additional-info',
+		'wc_additional_info'  => 'woocommerce-product-additional-information',
 		'wc_related_products' => 'woocommerce-product-related',
 		'wc_cart_notice'      => 'html',
 	];

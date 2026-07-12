@@ -38,7 +38,7 @@ class BatchImporter {
         }
 
         if ( empty( $layouts ) ) {
-            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-for-divi-to-elementor' ) ) ];
+            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-divi-to-elementor' ) ) ];
         }
 
         $max     = function_exists( 'apply_filters' ) ? (int) apply_filters( 'jhmgcofo_max_layouts', 1 ) : 1;
@@ -69,7 +69,7 @@ class BatchImporter {
             if ( empty( $elementor_data ) ) {
                 return $this->fail_result(
                     $title,
-                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-for-divi-to-elementor' )
+                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-divi-to-elementor' )
                 );
             }
 

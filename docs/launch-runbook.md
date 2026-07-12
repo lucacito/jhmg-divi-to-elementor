@@ -7,6 +7,9 @@ each step operator-confirmed by Lucas.
 The approval email / SVN URL names the slug (expected: `jhmg-converter-divi-to-elementor`).
 If it differs, update the Pro plugin's `Requires Plugins:` header
 (plugin/jhmg-converter-divi-to-elementor-pro/jhmg-converter-divi-to-elementor-pro.php) and re-release.
+Also verify the free plugin's `Text Domain:` matches the assigned slug (it now ships as
+`jhmg-converter-divi-to-elementor`); if wp.org assigned something else, sed the text domain
+across the free tree before the first SVN commit.
 
 ## 2. First SVN release = the TRIMMED free plugin
 wp.org reviewed the fat 1.0.0 zip, but the first public release ships the trimmed tree (this repo,
@@ -29,6 +32,10 @@ npx tsx scripts/release-plugin.ts --product divi-to-elementor-pro --version 1.0.
 curl "https://divi5lab.com/api/plugin/update-check?product=divi-to-elementor-pro&version=0.9.0"  # expect update:true, no package
 ```
 (Note: local dev DB has an e2e 1.0.1 release row — prod has none of that; publish 1.0.0 fresh.)
+
+Before publishing, open one Pro-converted page in the Elementor editor on a site WITH Elementor Pro
+active and confirm each of the 11 Woo widgets renders (names verified against Elementor Pro source
+2026-07-12; wc_reviews intentionally maps to Product Data Tabs).
 
 ## 4. Site flip (layoutlab)
 - /plugins/divi-to-elementor: drop the pending banner → add `<BuyProButton product="divi-to-elementor-pro" label="Get Pro — $49/yr" />`; keep the waitlist form as secondary ("get launch news").
