@@ -158,4 +158,60 @@ class FreeTrimTest extends TestCase {
         $this->assertStringContainsString( 'Pro add-on', $results[0]['error'] );
         $this->assertStringContainsString( 'divi-to-elementor?utm', $results[0]['error'] );
     }
+
+    // -----------------------------------------------------------------------
+    // TB rejection → admin error notice routing (review fix).
+    //
+    // handle_import() itself is not headlessly testable (check_admin_referer /
+    // wp_safe_redirect / exit), so these tests pin the two seams the routing is
+    // built from: (a) the exact-match condition — a TB import's failed result
+    // error must be IDENTICAL to DiviParser::THEME_BUILDER_PRO_MESSAGE, which
+    // is what AdminPage::handle_import() compares against to divert the result
+    // to the notice path; (b) the notice mechanism — set_notice()/render_notice()
+    // produce a consumed-once notice-error banner carrying the upsell URL.
+    // Task 8's e2e must eyeball the full upload→notice flow in wp-admin.
+    // -----------------------------------------------------------------------
+
+    public function test_tb_rejection_error_exactly_matches_parser_constant_used_for_notice_routing(): void {
+        // The constant must be public (AdminPage reads it) and self-contained
+        // (message + upsell URL).
+        $message = DiviParser::THEME_BUILDER_PRO_MESSAGE;
+        $this->assertStringContainsString( 'Theme Builder exports require the Pro add-on', $message );
+        $this->assertStringContainsString( 'divi-to-elementor?utm_source=plugin&utm_medium=upsell', $message );
+
+        // BatchImporter propagates the parser's message verbatim into the failed
+        // result — the exact-match routing in AdminPage::handle_import() relies
+        // on this identity.
+        $importer = new BatchImporter();
+        $results  = $importer->import( $this->theme_builder_json(), 'tb-export.json' );
+        $this->assertSame( $message, $results[0]['error'] );
+
+        // And handle_import() actually contains the routing (source-level pin,
+        // since the method itself cannot run headlessly).
+        $source = file_get_contents( $this->free_dir() . 'includes/admin/class-admin-page.php' );
+        $this->assertStringContainsString( 'THEME_BUILDER_PRO_MESSAGE', $source );
+    }
+
+    public function test_admin_notice_roundtrip_renders_error_banner_with_upsell_and_is_consumed(): void {
+        $page = new \DiviElementorConverter\Admin\AdminPage();
+
+        $set = new ReflectionMethod( $page, 'set_notice' );
+        $set->invoke( $page, 'error', DiviParser::THEME_BUILDER_PRO_MESSAGE );
+
+        $render = new ReflectionMethod( $page, 'render_notice' );
+
+        ob_start();
+        $render->invoke( $page );
+        $html = ob_get_clean();
+
+        $this->assertStringContainsString( 'notice-error', $html );
+        $this->assertStringContainsString( 'Theme Builder exports require the Pro add-on', $html );
+        $this->assertStringContainsString( 'divi-to-elementor?utm_source=plugin', $html );
+
+        // One-shot: the transient is consumed on render.
+        ob_start();
+        $render->invoke( $page );
+        $second = ob_get_clean();
+        $this->assertSame( '', $second );
+    }
 }

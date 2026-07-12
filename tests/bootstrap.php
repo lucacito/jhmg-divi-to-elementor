@@ -74,6 +74,13 @@ if ( ! function_exists( 'esc_html__' ) ) {
 	}
 }
 
+// Used by AdminPage::render_notice() (FreeTrimTest exercises it via reflection).
+if ( ! function_exists( 'esc_attr' ) ) {
+	function esc_attr( $text ) {
+		return htmlspecialchars( (string) $text, ENT_QUOTES );
+	}
+}
+
 if ( ! function_exists( '__return_true' ) ) {
 	function __return_true() {
 		return true;

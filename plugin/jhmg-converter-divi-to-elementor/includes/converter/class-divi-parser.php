@@ -10,8 +10,14 @@ class DiviParser {
 	/** Tags that must be explicitly closed; leaf modules are auto-closed if left open. */
 	private const STRUCTURAL_TAGS = [ 'section', 'row', 'row_inner', 'column', 'column_inner' ];
 
-	/** Thrown when an et_theme_builder export is submitted to the free plugin. */
-	private const THEME_BUILDER_PRO_MESSAGE = 'Theme Builder exports require the Pro add-on — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
+	/**
+	 * Thrown when an et_theme_builder export is submitted to the free plugin.
+	 * Public: AdminPage::handle_import() exact-matches a failed import result's
+	 * error against this constant to divert the Theme Builder rejection to an
+	 * admin error notice (with the upsell link) instead of a generic "Failed"
+	 * batch-result row.
+	 */
+	public const THEME_BUILDER_PRO_MESSAGE = 'Theme Builder exports require the Pro add-on — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
 
 	/**
 	 * Parse a Divi export JSON file and return top-level DiviNode array.

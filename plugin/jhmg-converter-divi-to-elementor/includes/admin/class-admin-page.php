@@ -148,15 +148,26 @@ class AdminPage {
                     ],
                 ];
             } else {
-                // BatchImporter::import() catches invalid/rejected JSON (including
-                // et_theme_builder exports, which DiviParser now throws on — see
-                // DiviParser::parse_layouts()) and returns a failed result whose
-                // `error` already carries the Pro upsell link; it surfaces on the
-                // batch results page like any other per-layout failure.
                 $results = $importer->import( $json, $file['name'], [
                     'post_type'   => $post_type,
                     'post_status' => $post_status,
                 ] );
+
+                // Theme Builder rejection → admin error notice, not a "Failed" row.
+                // DiviParser::parse_layouts() throws on et_theme_builder JSON;
+                // BatchImporter converts that exception into a single failed result
+                // carrying the exception message verbatim (so a try/catch here can
+                // never fire — the importer swallows it by design). Exact-match the
+                // parser's message constant to divert this one case to the same
+                // notice + redirect path the multi-file rejection uses; every other
+                // parse/import failure keeps the batch-results rendering.
+                if ( count( $results ) === 1
+                    && empty( $results[0]['success'] )
+                    && $results[0]['error'] === \DiviElementorConverter\Converter\DiviParser::THEME_BUILDER_PRO_MESSAGE ) {
+                    $this->set_notice( 'error', $results[0]['error'] );
+                    wp_safe_redirect( admin_url( 'tools.php?page=' . self::MENU_SLUG ) );
+                    exit;
+                }
             }
         }
 
