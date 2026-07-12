@@ -7,6 +7,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', '/tmp/fake-abspath/' );
 }
 
+if ( ! function_exists( 'esc_html' ) ) {
+	function esc_html( $text ) {
+		return htmlspecialchars( (string) $text, ENT_QUOTES );
+	}
+}
+
 // Custom autoloader that mirrors the plugin's class-*.php / strtolower-subdir convention.
 spl_autoload_register( function ( string $class ): void {
 	$prefix = 'DiviElementorConverter\\';
