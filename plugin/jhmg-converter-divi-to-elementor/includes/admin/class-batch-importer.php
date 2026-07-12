@@ -63,7 +63,8 @@ class BatchImporter {
 
     private function import_layout( array $nodes, string $title, string $post_type, string $post_status ): array {
         try {
-            $elementor_data = $this->builder->build( $nodes );
+            $elementor_data  = $this->builder->build( $nodes );
+            $module_warnings = $this->builder->get_warnings();
 
             if ( empty( $elementor_data ) ) {
                 return $this->fail_result(
@@ -93,12 +94,16 @@ class BatchImporter {
             update_post_meta( $post_id, '_elementor_version', '3.21.0' );
             update_post_meta( $post_id, '_elementor_template_type', 'wp-page' );
 
-            return [
+            $result = [
                 'title'   => $title,
                 'post_id' => $post_id,
                 'success' => true,
                 'error'   => '',
             ];
+            if ( ! empty( $module_warnings ) ) {
+                $result['report']['warnings'] = $module_warnings;
+            }
+            return $result;
         } catch ( \Throwable $e ) {
             return $this->fail_result( $title, $e->getMessage() );
         }

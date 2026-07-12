@@ -10,6 +10,8 @@ class AdminPage {
     const MENU_SLUG           = 'jhmgcofo-converter';
     const IMPORT_NONCE_NAME   = 'jhmgcofo_import_nonce';
     const IMPORT_NONCE_ACTION = 'jhmgcofo_import';
+    const NOTICE_TRANSIENT    = 'jhmgcofo_notice';
+    const PRO_UPSELL_URL      = 'https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
 
     public function init(): void {
         add_action( 'admin_menu', [ $this, 'register_menu' ] );
@@ -93,19 +95,25 @@ class AdminPage {
             wp_die( esc_html__( 'No file was uploaded.', 'jhmg-converter-for-divi-to-elementor' ) );
         }
 
-        // Normalise single-file and multi-file $_FILES shapes into a list.
+        // The free plugin accepts exactly one file per import. `name` being an
+        // array means a multi-file (`[]`-suffixed) submission slipped through —
+        // the form itself no longer offers `multiple`, so this only happens on a
+        // hand-crafted/legacy request. Reject with an upsell notice rather than
+        // silently processing only the first file.
         if ( is_array( $raw['name'] ) ) {
-            $files = [];
-            foreach ( $raw['name'] as $i => $name ) {
-                $files[] = [
-                    'name'     => $name,
-                    'tmp_name' => $raw['tmp_name'][ $i ],
-                    'error'    => $raw['error'][ $i ],
-                ];
-            }
-        } else {
-            $files = [ $raw ];
+            $this->set_notice(
+                'error',
+                sprintf(
+                    /* translators: %s is the Pro add-on upsell URL */
+                    __( 'Only one file can be imported at a time. The Pro add-on converts multiple files in a single batch — %s', 'jhmg-converter-for-divi-to-elementor' ),
+                    self::PRO_UPSELL_URL
+                )
+            );
+            wp_safe_redirect( admin_url( 'tools.php?page=' . self::MENU_SLUG ) );
+            exit;
         }
+
+        $file = $raw;
 
         $post_type = sanitize_key( $_POST['jhmgcofo_post_type'] ?? 'page' );
         if ( ! in_array( $post_type, [ 'page', 'post' ], true ) ) {
@@ -118,35 +126,38 @@ class AdminPage {
         }
 
         $importer = new BatchImporter();
-        $results  = [];
 
-        foreach ( $files as $file ) {
-            if ( $file['error'] !== UPLOAD_ERR_OK ) {
-                $results[] = [
+        if ( $file['error'] !== UPLOAD_ERR_OK ) {
+            $results = [
+                [
                     'title'   => sanitize_file_name( $file['name'] ),
                     'post_id' => 0,
                     'success' => false,
                     'error'   => $this->upload_error_message( (int) $file['error'] ),
-                ];
-                continue;
-            }
-
+                ],
+            ];
+        } else {
             $json = file_get_contents( $file['tmp_name'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
             if ( $json === false ) {
-                $results[] = [
-                    'title'   => sanitize_file_name( $file['name'] ),
-                    'post_id' => 0,
-                    'success' => false,
-                    'error'   => __( 'Could not read the uploaded file.', 'jhmg-converter-for-divi-to-elementor' ),
+                $results = [
+                    [
+                        'title'   => sanitize_file_name( $file['name'] ),
+                        'post_id' => 0,
+                        'success' => false,
+                        'error'   => __( 'Could not read the uploaded file.', 'jhmg-converter-for-divi-to-elementor' ),
+                    ],
                 ];
-                continue;
+            } else {
+                // BatchImporter::import() catches invalid/rejected JSON (including
+                // et_theme_builder exports, which DiviParser now throws on — see
+                // DiviParser::parse_layouts()) and returns a failed result whose
+                // `error` already carries the Pro upsell link; it surfaces on the
+                // batch results page like any other per-layout failure.
+                $results = $importer->import( $json, $file['name'], [
+                    'post_type'   => $post_type,
+                    'post_status' => $post_status,
+                ] );
             }
-
-            $file_results = $importer->import( $json, $file['name'], [
-                'post_type'   => $post_type,
-                'post_status' => $post_status,
-            ] );
-            $results = array_merge( $results, $file_results );
         }
 
         $import_id = $this->generate_import_id();
@@ -197,6 +208,27 @@ class AdminPage {
         exit;
     }
 
+    /** Queue a one-time admin notice, rendered and consumed by render_notice(). */
+    private function set_notice( string $type, string $message ): void {
+        set_transient( self::NOTICE_TRANSIENT, [ 'type' => $type, 'message' => $message ], 45 );
+    }
+
+    /** Render (and consume) a queued admin notice, if one is pending. */
+    private function render_notice(): void {
+        $notice = get_transient( self::NOTICE_TRANSIENT );
+        if ( ! is_array( $notice ) ) {
+            return;
+        }
+        delete_transient( self::NOTICE_TRANSIENT );
+
+        $css_class = $notice['type'] === 'error' ? 'notice-error' : 'notice-warning';
+        printf(
+            '<div class="notice %s is-dismissible"><p>%s</p></div>',
+            esc_attr( $css_class ),
+            esc_html( $notice['message'] )
+        );
+    }
+
     private function generate_import_id(): string {
         return function_exists( 'wp_generate_uuid4' )
             ? wp_generate_uuid4()
@@ -225,6 +257,7 @@ class AdminPage {
         ?>
         <div class="wrap dec-wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e( 'Divi to Elementor Converter', 'jhmg-converter-for-divi-to-elementor' ); ?></h1>
+            <?php $this->render_notice(); ?>
             <div class="dec-layout-with-sidebar">
                 <div class="dec-layout-main">
                     <?php $this->render_import_section(); ?>
@@ -240,6 +273,21 @@ class AdminPage {
     private function render_sidebar(): void {
         ?>
         <div class="dec-sidebar">
+
+            <div class="dec-sidebar-card dec-sidebar-card--pro">
+                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Go Pro — $49/yr', 'jhmg-converter-for-divi-to-elementor' ); ?></h3>
+                <ul class="dec-sidebar-pro-features">
+                    <li><?php esc_html_e( 'Batch conversion — every layout, every file, one run', 'jhmg-converter-for-divi-to-elementor' ); ?></li>
+                    <li><?php esc_html_e( 'WooCommerce widgets — product modules mapped to Elementor Pro', 'jhmg-converter-for-divi-to-elementor' ); ?></li>
+                    <li><?php esc_html_e( 'Theme Builder import — headers and footers, converted', 'jhmg-converter-for-divi-to-elementor' ); ?></li>
+                </ul>
+                <a href="<?php echo esc_url( self::PRO_UPSELL_URL ); ?>"
+                   class="button button-primary dec-sidebar-pro-link"
+                   target="_blank"
+                   rel="noopener noreferrer">
+                    <?php esc_html_e( 'Get Divi to Elementor Pro →', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                </a>
+            </div>
 
             <div class="dec-sidebar-card dec-sidebar-card--promo">
                 <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Also by JHMG', 'jhmg-converter-for-divi-to-elementor' ); ?></h3>
@@ -282,7 +330,7 @@ class AdminPage {
         <div class="dec-import-section">
             <h2><?php esc_html_e( 'Import Divi Layout JSON', 'jhmg-converter-for-divi-to-elementor' ); ?></h2>
             <p class="dec-description">
-                <?php esc_html_e( 'Upload one or more Divi Builder JSON exports. Single-layout and multi-layout (Builder Library) exports are both supported — each layout becomes its own Elementor draft page.', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                <?php esc_html_e( 'Upload a single Divi JSON export — a standard page export or a Builder Library file. The first layout in the file is converted into an Elementor draft page.', 'jhmg-converter-for-divi-to-elementor' ); ?>
             </p>
 
             <form method="post" enctype="multipart/form-data" action="" class="dec-import-form">
@@ -294,8 +342,8 @@ class AdminPage {
                         <label for="jhmgcofo_import_file">
                             <strong><?php esc_html_e( 'File', 'jhmg-converter-for-divi-to-elementor' ); ?></strong>
                         </label>
-                        <input type="file" id="jhmgcofo_import_file" name="jhmgcofo_import_file[]" accept=".json" multiple required>
-                        <p class="description"><?php esc_html_e( 'Accepted: one or more .json files (Divi layout or Builder Library exports)', 'jhmg-converter-for-divi-to-elementor' ); ?></p>
+                        <input type="file" id="jhmgcofo_import_file" name="jhmgcofo_import_file" accept=".json" required>
+                        <p class="description"><?php esc_html_e( 'Accepted: a single .json file (Divi layout or Builder Library export)', 'jhmg-converter-for-divi-to-elementor' ); ?></p>
                     </div>
 
                     <div class="dec-import-field">
@@ -407,6 +455,9 @@ class AdminPage {
                                     <br><small class="dec-error-msg"><?php echo esc_html( $result['error'] ); ?></small>
                                 <?php endif; ?>
                             <?php endif; ?>
+                            <?php foreach ( $result['report']['warnings'] ?? [] as $warning ) : ?>
+                                <br><small class="dec-warning-msg">&#9888; <?php echo esc_html( $warning ); ?></small>
+                            <?php endforeach; ?>
                         </td>
                         <td class="column-actions">
                             <?php if ( $result['success'] && $result['post_id'] > 0 ) : ?>
@@ -474,6 +525,7 @@ class AdminPage {
 .dec-status--converted { color: #2e7d32; }
 .dec-status--error     { color: #c62828; }
 .dec-error-msg         { color: #c62828; font-size: 11px; }
+.dec-warning-msg       { color: #9a6700; font-size: 11px; }
 
 /* Batch summary */
 .dec-batch-summary { display: flex; gap: 12px; margin: 16px 0 20px; flex-wrap: wrap; }
@@ -503,9 +555,15 @@ class AdminPage {
 /* Sidebar container */
 .dec-sidebar { display: flex; flex-direction: column; gap: 16px; }
 .dec-sidebar-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; box-shadow: 0 1px 6px rgba(0,0,0,.05); }
+.dec-sidebar-card--pro    { border-top: 3px solid #7c3aed; }
 .dec-sidebar-card--promo  { border-top: 3px solid #2271b1; }
 .dec-sidebar-card--donate { border-top: 3px solid #f97316; }
 .dec-sidebar-card-title   { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: #1e293b; }
+
+/* Go Pro block */
+.dec-sidebar-pro-features { margin: 0 0 14px; padding-left: 18px; font-size: 12px; color: #475569; line-height: 1.6; }
+.dec-sidebar-pro-features li { margin-bottom: 4px; }
+.dec-sidebar-pro-link.button { width: 100%; text-align: center; font-size: 12px; }
 
 /* Promo block */
 .dec-sidebar-promo      { display: flex; gap: 12px; align-items: flex-start; }

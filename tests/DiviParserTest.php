@@ -157,7 +157,12 @@ class DiviParserTest extends TestCase {
 		$this->assertSame( 'section', $nodes[0]->tag );
 	}
 
-	public function test_parse_json_et_theme_builder(): void {
+	/**
+	 * Task 6 trim: free no longer parses et_theme_builder JSON — Theme Builder
+	 * import requires the Pro add-on. Was a successful-parse assertion; now a
+	 * rejection assertion (same fixture, new expected behavior).
+	 */
+	public function test_parse_json_et_theme_builder_throws_pro_required(): void {
 		$sc   = '[et_pb_section][et_pb_row][et_pb_column type="4_4"][et_pb_text]TB[/et_pb_text][/et_pb_column][/et_pb_row][/et_pb_section]';
 		$json = json_encode( [
 			'context'   => 'et_theme_builder',
@@ -166,9 +171,9 @@ class DiviParserTest extends TestCase {
 			],
 		] );
 
-		$nodes = $this->parser->parse_json( $json );
-		$this->assertCount( 1, $nodes );
-		$this->assertSame( 'section', $nodes[0]->tag );
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessageMatches( '/Pro add-on/' );
+		$this->parser->parse_json( $json );
 	}
 
 	public function test_parse_json_invalid_throws(): void {
@@ -180,71 +185,24 @@ class DiviParserTest extends TestCase {
 	// Real reference file smoke-test
 	// -----------------------------------------------------------------------
 
-	public function test_parse_theme_builder_layouts_returns_role_tagged_results(): void {
-		$row = '[et_pb_row][et_pb_column type="4_4"][et_pb_text]x[/et_pb_text][/et_pb_column][/et_pb_row]';
-		$sc  = "[et_pb_section]{$row}[/et_pb_section]";
+	// Note: the three parse_theme_builder_layouts() tests that used to live here
+	// (role-tagged results, wrong-context-throws, and the header/footer reference
+	// file smoke test) moved to tests/ProFeaturesTest.php with the same
+	// assertions — that method is now Pro-only, ported onto
+	// DiviElementorConverter\Pro\Converter\ThemeBuilderImporter (free's
+	// DiviParser no longer has it; see FreeTrimTest and Task 6's report).
 
-		$json = json_encode( [
-			'context'   => 'et_theme_builder',
-			'templates' => [
-				[
-					'title'   => 'Default',
-					'layouts' => [
-						'header' => [ 'id' => 10, 'enabled' => true ],
-						'body'   => [ 'id' => 0,  'enabled' => true ],
-						'footer' => [ 'id' => 20, 'enabled' => true ],
-					],
-				],
-			],
-			'layouts'   => [
-				'10' => [ 'context' => 'et_builder', 'data' => [ '10' => $sc ] ],
-				'20' => [ 'context' => 'et_builder', 'data' => [ '20' => $sc ] ],
-			],
-		] );
+	/**
+	 * Task 6 trim: this reference file is a real-world et_theme_builder export
+	 * (a Theme Builder "404 page" pack). It used to be a successful-parse smoke
+	 * test via parse_json(); now free rejects it outright with the Pro upsell
+	 * message — same fixture, adapted assertion.
+	 */
+	public function test_parse_404_reference_file_now_requires_pro(): void {
+		$json = file_get_contents( __DIR__ . '/../references/divi-theme-builder-pack-1-404-page-template.json' );
 
-		$results = $this->parser->parse_theme_builder_layouts( $json );
-
-		$this->assertCount( 2, $results );
-
-		$roles = array_column( $results, 'role' );
-		$this->assertContains( 'header', $roles );
-		$this->assertContains( 'footer', $roles );
-
-		foreach ( $results as $entry ) {
-			$this->assertNotEmpty( $entry['nodes'] );
-			$this->assertSame( 'section', $entry['nodes'][0]->tag );
-		}
-	}
-
-	public function test_parse_theme_builder_layouts_wrong_context_throws(): void {
-		$json = json_encode( [ 'context' => 'et_builder', 'data' => [] ] );
 		$this->expectException( \InvalidArgumentException::class );
-		$this->parser->parse_theme_builder_layouts( $json );
-	}
-
-	public function test_parse_theme_builder_layouts_from_header_footer_reference(): void {
-		$json    = file_get_contents( __DIR__ . '/../references/headerandfooterplustemplates.json' );
-		$results = $this->parser->parse_theme_builder_layouts( $json );
-
-		$this->assertNotEmpty( $results );
-
-		$roles = array_column( $results, 'role' );
-		$this->assertContains( 'header', $roles, 'Must identify at least one header layout' );
-		$this->assertContains( 'footer', $roles, 'Must identify at least one footer layout' );
-
-		foreach ( $results as $entry ) {
-			$this->assertNotEmpty( $entry['nodes'], "Layout {$entry['id']} ({$entry['role']}) produced no nodes" );
-			$this->assertSame( 'section', $entry['nodes'][0]->tag );
-		}
-	}
-
-	public function test_parse_404_reference_file(): void {
-		$json  = file_get_contents( __DIR__ . '/../references/divi-theme-builder-pack-1-404-page-template.json' );
-		$nodes = $this->parser->parse_json( $json );
-
-		$this->assertNotEmpty( $nodes );
-		foreach ( $nodes as $node ) {
-			$this->assertSame( 'section', $node->tag );
-		}
+		$this->expectExceptionMessageMatches( '/Pro add-on/' );
+		$this->parser->parse_json( $json );
 	}
 }

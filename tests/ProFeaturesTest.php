@@ -148,6 +148,60 @@ class ProFeaturesTest extends TestCase {
     }
 
     // -----------------------------------------------------------------------
+    // ThemeBuilderImporter::parse_theme_builder_layouts()
+    //
+    // Moved from tests/DiviParserTest.php (free DiviParser::parse_theme_builder_layouts()
+    // is now Pro-only — free's DiviParser throws on et_theme_builder JSON instead,
+    // see tests/FreeTrimTest.php). Task 6's brief called for verifying whether
+    // Pro's ThemeBuilderImporter depended on free's parser method before deleting
+    // it there: it did (import() called $this->parser->parse_theme_builder_layouts()
+    // where $parser is free's DiviParser), so the method was ported onto
+    // ThemeBuilderImporter itself rather than deleted — these three tests are the
+    // same assertions as before, just called on the new home of the method.
+    // -----------------------------------------------------------------------
+
+    public function test_parse_theme_builder_layouts_returns_role_tagged_results(): void {
+        $importer = new \DiviElementorConverter\Pro\Converter\ThemeBuilderImporter();
+        $results  = $importer->parse_theme_builder_layouts( $this->theme_builder_json() );
+
+        $this->assertCount( 2, $results );
+
+        $roles = array_column( $results, 'role' );
+        $this->assertContains( 'header', $roles );
+        $this->assertContains( 'footer', $roles );
+
+        foreach ( $results as $entry ) {
+            $this->assertNotEmpty( $entry['nodes'] );
+            $this->assertSame( 'section', $entry['nodes'][0]->tag );
+        }
+    }
+
+    public function test_parse_theme_builder_layouts_wrong_context_throws(): void {
+        $importer = new \DiviElementorConverter\Pro\Converter\ThemeBuilderImporter();
+        $json     = json_encode( [ 'context' => 'et_builder', 'data' => [] ] );
+
+        $this->expectException( \InvalidArgumentException::class );
+        $importer->parse_theme_builder_layouts( $json );
+    }
+
+    public function test_parse_theme_builder_layouts_from_header_footer_reference(): void {
+        $importer = new \DiviElementorConverter\Pro\Converter\ThemeBuilderImporter();
+        $json     = file_get_contents( __DIR__ . '/../references/headerandfooterplustemplates.json' );
+        $results  = $importer->parse_theme_builder_layouts( $json );
+
+        $this->assertNotEmpty( $results );
+
+        $roles = array_column( $results, 'role' );
+        $this->assertContains( 'header', $roles, 'Must identify at least one header layout' );
+        $this->assertContains( 'footer', $roles, 'Must identify at least one footer layout' );
+
+        foreach ( $results as $entry ) {
+            $this->assertNotEmpty( $entry['nodes'], "Layout {$entry['id']} ({$entry['role']}) produced no nodes" );
+            $this->assertSame( 'section', $entry['nodes'][0]->tag );
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // ProPage — jhmgcofop_* dispatch collision guard
     //
     // Mirrors the sibling jhmg-elementor-to-divi5 project's Phase 2 lesson
