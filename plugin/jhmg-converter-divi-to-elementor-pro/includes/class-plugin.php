@@ -26,7 +26,13 @@ class Plugin {
 
         add_filter( 'jhmgcofo_pro_active', '__return_true' );
 
-        // TODO: Wire Pro features here in later tasks (batch conversion, WooCommerce widget mapping, Divi Theme Builder import, license client, etc.).
+        add_filter( 'jhmgcofo_convert_module', [ new Converter\WooModules(), 'maybe_convert' ], 10, 2 );
+        add_filter( 'jhmgcofo_max_layouts', static fn () => PHP_INT_MAX );
+        if ( is_admin() ) {
+            ( new Admin\ProPage() )->init();
+        }
+
+        // TODO: Wire the license client here in a later task.
     }
 
     public function render_missing_free_notice(): void {

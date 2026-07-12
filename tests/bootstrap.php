@@ -382,6 +382,22 @@ if ( ! function_exists( 'get_template' ) ) {
 	}
 }
 
+// current_time() is unstubbed elsewhere in this bootstrap (existing callers all
+// have a non-empty-title short-circuit that skips it) but Pro's
+// ThemeBuilderImporter::import() calls it unconditionally per header/footer
+// layout, porting the free plugin's dead Converter::convert_theme_builder().
+if ( ! function_exists( 'current_time' ) ) {
+	function current_time( $type = 'mysql', $gmt = 0 ) {
+		if ( $type === 'timestamp' ) {
+			return time();
+		}
+		if ( $type === 'mysql' ) {
+			return date( 'Y-m-d H:i:s' );
+		}
+		return date( $type );
+	}
+}
+
 // Licensing HTTP stubs (used by Pro\Licensing\LicenseClient).
 if ( ! defined( 'DAY_IN_SECONDS' ) ) {
 	define( 'DAY_IN_SECONDS', 86400 );
