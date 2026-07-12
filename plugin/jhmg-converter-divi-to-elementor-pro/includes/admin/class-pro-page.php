@@ -4,6 +4,8 @@ namespace DiviElementorConverter\Pro\Admin;
 
 use DiviElementorConverter\Admin\BatchImporter;
 use DiviElementorConverter\Pro\Converter\ThemeBuilderImporter;
+use DiviElementorConverter\Pro\Licensing\LicenseClient;
+use DiviElementorConverter\Pro\Licensing\LicensePage;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -12,7 +14,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Pro Tools page: uncapped multi-file/multi-layout batch conversion, accepting
  * both single-page (et_builder/et_builder_layouts) and Theme Builder
- * (et_theme_builder) Divi JSON exports.
+ * (et_theme_builder) Divi JSON exports. Also hosts the License tab when a
+ * LicenseClient is supplied (soft enforcement — see Licensing\LicenseClient).
  *
  * All dispatch identifiers are jhmgcofop_-prefixed on purpose. Free's
  * AdminPage::handle_post() hooks admin_init unscoped, runs BEFORE Pro's
@@ -27,6 +30,12 @@ class ProPage {
 	const MENU_SLUG           = 'jhmgcofop-converter';
 	const IMPORT_NONCE_NAME   = 'jhmgcofop_import_nonce';
 	const IMPORT_NONCE_ACTION = 'jhmgcofop_import';
+
+	private ?LicensePage $license_page;
+
+	public function __construct( ?LicenseClient $license = null ) {
+		$this->license_page = $license ? new LicensePage( $license ) : null;
+	}
 
 	public function init(): void {
 		add_action( 'admin_menu', [ $this, 'register_menu' ] );
@@ -60,9 +69,45 @@ class ProPage {
 
 		if ( $action === 'batch_result' ) {
 			$this->render_batch_result();
-		} else {
-			$this->render_list();
+			return;
 		}
+
+		$allowed_tabs = $this->license_page ? [ 'import', 'license' ] : [ 'import' ];
+		$tab = sanitize_key( $_GET['tab'] ?? 'import' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( ! in_array( $tab, $allowed_tabs, true ) ) {
+			$tab = 'import';
+		}
+
+		if ( ! $this->license_page ) {
+			$this->render_list();
+			return;
+		}
+
+		$base_url = admin_url( 'tools.php?page=' . self::MENU_SLUG );
+		?>
+		<div class="wrap jhmgcofop-wrap">
+			<h1 class="wp-heading-inline"><?php esc_html_e( 'Divi to Elementor Converter — Pro', 'jhmg-converter-divi-to-elementor-pro' ); ?></h1>
+
+			<nav class="nav-tab-wrapper jhmgcofop-nav-tabs">
+				<a href="<?php echo esc_url( $base_url . '&tab=import' ); ?>"
+				   class="nav-tab<?php echo $tab === 'import' ? ' nav-tab-active' : ''; ?>">
+					<?php esc_html_e( 'Import', 'jhmg-converter-divi-to-elementor-pro' ); ?>
+				</a>
+				<a href="<?php echo esc_url( $base_url . '&tab=license' ); ?>"
+				   class="nav-tab<?php echo $tab === 'license' ? ' nav-tab-active' : ''; ?>">
+					<?php esc_html_e( 'License', 'jhmg-converter-divi-to-elementor-pro' ); ?>
+				</a>
+			</nav>
+
+			<div class="jhmgcofop-tab-content">
+				<?php if ( $tab === 'license' ) : ?>
+					<?php $this->license_page->render(); ?>
+				<?php else : ?>
+					<?php $this->render_import_section(); ?>
+				<?php endif; ?>
+			</div>
+		</div>
+		<?php
 	}
 
 	// ------------------------------------------------------------------
@@ -81,10 +126,16 @@ class ProPage {
 		if ( $action === 'jhmgcofop_import' ) {
 			$this->handle_import();
 		}
+		if ( $action === 'jhmgcofop_save_license' && $this->license_page ) {
+			$this->license_page->handle_post();
+		}
 
 		$jhmgcofop_action = sanitize_key( $_GET['jhmgcofop_action'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- handler verifies its own nonce
 		if ( $jhmgcofop_action === 'publish' ) {
 			$this->handle_publish();
+		}
+		if ( in_array( $jhmgcofop_action, [ 'deactivate_license', 'refresh_license' ], true ) && $this->license_page ) {
+			$this->license_page->handle_post();
 		}
 	}
 

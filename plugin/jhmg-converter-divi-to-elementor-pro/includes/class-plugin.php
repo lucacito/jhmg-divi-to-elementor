@@ -28,11 +28,23 @@ class Plugin {
 
         add_filter( 'jhmgcofo_convert_module', [ new Converter\WooModules(), 'maybe_convert' ], 10, 2 );
         add_filter( 'jhmgcofo_max_layouts', static fn () => PHP_INT_MAX );
-        if ( is_admin() ) {
-            ( new Admin\ProPage() )->init();
-        }
 
-        // TODO: Wire the license client here in a later task.
+        $license = new Licensing\LicenseClient(
+            JHMGCOFOP_PRODUCT_SLUG,
+            JHMGCOFOP_PLUGIN_VERSION,
+            JHMGCOFOP_API_BASE,
+            plugin_basename( JHMGCOFOP_PLUGIN_FILE ),
+            'jhmgcofop-converter',
+            'https://divi5lab.com/plugins/divi-to-elementor',
+            'jhmgcofop'
+        );
+        add_filter( 'pre_set_site_transient_update_plugins', [ $license, 'inject_update' ] );
+
+        if ( is_admin() ) {
+            ( new Admin\ProPage( $license ) )->init();
+            add_action( 'admin_init', function () use ( $license ) { $license->refresh(); } );
+            add_action( 'admin_notices', [ new Licensing\LicensePage( $license ), 'maybe_render_notice' ] );
+        }
     }
 
     public function render_missing_free_notice(): void {

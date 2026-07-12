@@ -96,6 +96,16 @@ if ( ! function_exists( 'jhmg_test_reset_hooks' ) ) {
 		if ( isset( $GLOBALS['__test_options'] ) ) {
 			$GLOBALS['__test_options'] = [];
 		}
+		// Reset transients + the licensing HTTP queue/log too — LicenseClient
+		// caches update-check responses in a transient, and leftover queued
+		// HTTP fixtures/log entries from a prior test would otherwise leak
+		// across tests that rely on isolation (e.g. counting HTTP calls).
+		if ( isset( $GLOBALS['__test_transients'] ) ) {
+			$GLOBALS['__test_transients'] = [];
+		}
+		if ( isset( $GLOBALS['jhmg_test_http'] ) ) {
+			$GLOBALS['jhmg_test_http'] = [ 'queue' => [], 'log' => [] ];
+		}
 	}
 }
 
