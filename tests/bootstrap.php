@@ -48,6 +48,14 @@ if ( ! function_exists( 'register_deactivation_hook' ) ) {
 	function register_deactivation_hook( $file, $callback ) {}
 }
 
+if ( ! function_exists( 'add_shortcode' ) ) {
+	$GLOBALS['__test_shortcodes'] = [];
+
+	function add_shortcode( $tag, $callback ) {
+		$GLOBALS['__test_shortcodes'][ $tag ] = $callback;
+	}
+}
+
 if ( ! function_exists( 'wp_parse_url' ) ) {
 	function wp_parse_url( $url, $component = -1 ) {
 		return parse_url( (string) $url, $component );

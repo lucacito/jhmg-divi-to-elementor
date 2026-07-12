@@ -351,6 +351,13 @@ class ElementorBuilder {
 			return null;
 		}
 
+		if ( function_exists( 'apply_filters' ) ) {
+			$intercepted = apply_filters( 'jhmgcofo_convert_module', null, $node );
+			if ( is_array( $intercepted ) ) {
+				return $intercepted;
+			}
+		}
+
 		$widget_type = self::WIDGET_MAP[ $node->tag ] ?? null;
 
 		$widget_id = $this->uid();

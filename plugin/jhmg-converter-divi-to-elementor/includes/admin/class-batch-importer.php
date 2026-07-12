@@ -41,10 +41,21 @@ class BatchImporter {
             return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-for-divi-to-elementor' ) ) ];
         }
 
+        $max     = function_exists( 'apply_filters' ) ? (int) apply_filters( 'jhmgcofo_max_layouts', 1 ) : 1;
+        $skipped = max( 0, count( $layouts ) - $max );
+        $layouts = array_slice( $layouts, 0, $max );
+
         $results = [];
         foreach ( $layouts as $layout ) {
             $title     = $layout['title'] !== '' ? $layout['title'] : $fallback_title;
             $results[] = $this->import_layout( $layout['nodes'], $title, $post_type, $post_status );
+        }
+
+        if ( $skipped > 0 ) {
+            $results[ array_key_last( $results ) ]['report']['warnings'][] = sprintf(
+                'This export contains %d more layout(s). The Pro add-on converts every layout in one run — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell',
+                $skipped
+            );
         }
 
         return $results;
