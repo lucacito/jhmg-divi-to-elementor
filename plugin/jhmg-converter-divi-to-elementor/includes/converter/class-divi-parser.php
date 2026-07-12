@@ -9,14 +9,25 @@ if ( ! defined( 'ABSPATH' ) ) {
 class DiviParser {
 	/** Tags that must be explicitly closed; leaf modules are auto-closed if left open. */
 	private const STRUCTURAL_TAGS = [ 'section', 'row', 'row_inner', 'column', 'column_inner' ];
+
+	/**
+	 * Thrown when an et_theme_builder export is submitted to the free plugin.
+	 * Public: AdminPage::handle_import() exact-matches a failed import result's
+	 * error against this constant to divert the Theme Builder rejection to an
+	 * admin error notice (with the upsell link) instead of a generic "Failed"
+	 * batch-result row.
+	 */
+	public const THEME_BUILDER_PRO_MESSAGE = 'Theme Builder exports require the Pro add-on — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
+
 	/**
 	 * Parse a Divi export JSON file and return top-level DiviNode array.
 	 *
-	 * Handles both et_builder (standard page export) and
-	 * et_theme_builder (theme template export) contexts.
+	 * Handles et_builder (standard page export) and et_builder_layouts
+	 * (Builder Library export) contexts. et_theme_builder (theme template)
+	 * exports are rejected — Theme Builder import requires the Pro add-on.
 	 *
 	 * @return DiviNode[]
-	 * @throws \InvalidArgumentException on invalid JSON.
+	 * @throws \InvalidArgumentException on invalid JSON or an et_theme_builder export.
 	 */
 	public function parse_json( string $json ): array {
 		$data = json_decode( $json, true );
@@ -25,16 +36,11 @@ class DiviParser {
 			throw new \InvalidArgumentException( 'Invalid JSON: ' . esc_html( json_last_error_msg() ) );
 		}
 
-		$nodes = [];
-
 		if ( ( $data['context'] ?? '' ) === 'et_theme_builder' ) {
-			foreach ( $data['layouts'] ?? [] as $layout ) {
-				foreach ( $layout['data'] ?? [] as $shortcode_str ) {
-					$nodes = array_merge( $nodes, $this->parse_shortcodes( (string) $shortcode_str ) );
-				}
-			}
-			return $nodes;
+			throw new \InvalidArgumentException( self::THEME_BUILDER_PRO_MESSAGE );
 		}
+
+		$nodes = [];
 
 		// Divi library layout export (et_builder_layouts): data values are post objects.
 		if ( ( $data['context'] ?? '' ) === 'et_builder_layouts' ) {
@@ -74,15 +80,15 @@ class DiviParser {
 	/**
 	 * Parse a Divi JSON export into an array of named layouts.
 	 *
-	 * Handles all three Divi export contexts and always returns the same shape:
+	 * Handles the two free-tier export contexts and always returns the same shape:
 	 *   [['title' => string, 'nodes' => DiviNode[]], ...]
 	 *
 	 * - et_builder_layouts: one entry per layout in data[].
-	 * - et_theme_builder:   one entry per template layout (header/footer/body).
 	 * - et_builder (default): single entry with empty title.
+	 * - et_theme_builder: rejected — Theme Builder import requires the Pro add-on.
 	 *
 	 * @return array<int, array{title: string, nodes: DiviNode[]}>
-	 * @throws \InvalidArgumentException on invalid JSON.
+	 * @throws \InvalidArgumentException on invalid JSON or an et_theme_builder export.
 	 */
 	public function parse_layouts( string $json ): array {
 		$data = json_decode( $json, true );
@@ -92,6 +98,10 @@ class DiviParser {
 		}
 
 		$context = $data['context'] ?? '';
+
+		if ( $context === 'et_theme_builder' ) {
+			throw new \InvalidArgumentException( self::THEME_BUILDER_PRO_MESSAGE );
+		}
 
 		// Divi Builder Library export — one entry per saved layout.
 		if ( $context === 'et_builder_layouts' ) {
@@ -107,104 +117,12 @@ class DiviParser {
 			return $results;
 		}
 
-		// Theme Builder export — one entry per layout template.
-		if ( $context === 'et_theme_builder' ) {
-			$role_map = [];
-			foreach ( $data['templates'] ?? [] as $template ) {
-				foreach ( $template['layouts'] ?? [] as $role => $info ) {
-					$id = (string) ( $info['id'] ?? 0 );
-					if ( $id !== '0' && ! isset( $role_map[ $id ] ) ) {
-						$role_map[ $id ] = $role;
-					}
-				}
-			}
-			$results = [];
-			$seen    = [];
-			foreach ( $data['layouts'] ?? [] as $id => $layout ) {
-				$id = (string) $id;
-				if ( isset( $seen[ $id ] ) ) {
-					continue;
-				}
-				$seen[ $id ] = true;
-				$nodes       = [];
-				foreach ( $layout['data'] ?? [] as $shortcode_str ) {
-					if ( is_string( $shortcode_str ) ) {
-						$nodes = array_merge( $nodes, $this->parse_shortcodes( $shortcode_str ) );
-					}
-				}
-				$results[] = [
-					'title' => ucfirst( $role_map[ $id ] ?? 'Layout' ),
-					'nodes' => $nodes,
-				];
-			}
-			return $results;
-		}
-
 		// Standard single-layout export.
 		$nodes = [];
 		foreach ( $data['data'] ?? [] as $shortcode_str ) {
 			$nodes = array_merge( $nodes, $this->parse_shortcodes( (string) $shortcode_str ) );
 		}
 		return [ [ 'title' => '', 'nodes' => $nodes ] ];
-	}
-
-	/**
-	 * Parse an et_theme_builder export and return per-layout data with role info.
-	 *
-	 * Each entry in the returned array describes one layout (header, footer, body,
-	 * or unknown) and the DiviNode tree parsed from its shortcode content.
-	 *
-	 * @return array<int, array{role: string, id: string, nodes: DiviNode[]}>
-	 * @throws \InvalidArgumentException on invalid JSON or wrong context.
-	 */
-	public function parse_theme_builder_layouts( string $json ): array {
-		$data = json_decode( $json, true );
-
-		if ( json_last_error() !== JSON_ERROR_NONE ) {
-			throw new \InvalidArgumentException( 'Invalid JSON: ' . esc_html( json_last_error_msg() ) );
-		}
-
-		if ( ( $data['context'] ?? '' ) !== 'et_theme_builder' ) {
-			throw new \InvalidArgumentException(
-				'JSON context is not et_theme_builder (got: ' . esc_html( $data['context'] ?? 'none' ) . ')'
-			);
-		}
-
-		// Build layout_id → role map from the templates list.
-		$role_map = [];
-		foreach ( $data['templates'] ?? [] as $template ) {
-			foreach ( $template['layouts'] ?? [] as $role => $info ) {
-				$id = (string) ( $info['id'] ?? 0 );
-				if ( $id !== '0' && ! isset( $role_map[ $id ] ) ) {
-					$role_map[ $id ] = $role; // 'header', 'footer', 'body'
-				}
-			}
-		}
-
-		$results = [];
-		$seen    = [];
-		foreach ( $data['layouts'] ?? [] as $id => $layout ) {
-			$id = (string) $id;
-			if ( isset( $seen[ $id ] ) ) {
-				continue;
-			}
-			$seen[ $id ] = true;
-
-			$nodes = [];
-			foreach ( $layout['data'] ?? [] as $shortcode_str ) {
-				if ( is_string( $shortcode_str ) ) {
-					$nodes = array_merge( $nodes, $this->parse_shortcodes( $shortcode_str ) );
-				}
-			}
-
-			$results[] = [
-				'role'  => $role_map[ $id ] ?? 'unknown',
-				'id'    => $id,
-				'nodes' => $nodes,
-			];
-		}
-
-		return $results;
 	}
 
 	// -----------------------------------------------------------------------

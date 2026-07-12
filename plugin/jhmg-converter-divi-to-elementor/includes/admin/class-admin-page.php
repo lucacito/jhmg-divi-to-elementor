@@ -10,6 +10,8 @@ class AdminPage {
     const MENU_SLUG           = 'jhmgcofo-converter';
     const IMPORT_NONCE_NAME   = 'jhmgcofo_import_nonce';
     const IMPORT_NONCE_ACTION = 'jhmgcofo_import';
+    const NOTICE_TRANSIENT    = 'jhmgcofo_notice';
+    const PRO_UPSELL_URL      = 'https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
 
     public function init(): void {
         add_action( 'admin_menu', [ $this, 'register_menu' ] );
@@ -32,8 +34,8 @@ class AdminPage {
 
     public function register_menu(): void {
         add_management_page(
-            __( 'Divi to Elementor Converter', 'jhmg-converter-for-divi-to-elementor' ),
-            __( 'Divi → Elementor', 'jhmg-converter-for-divi-to-elementor' ),
+            __( 'Divi to Elementor Converter', 'jhmg-converter-divi-to-elementor' ),
+            __( 'Divi → Elementor', 'jhmg-converter-divi-to-elementor' ),
             'manage_options',
             self::MENU_SLUG,
             [ $this, 'render_page' ]
@@ -46,7 +48,7 @@ class AdminPage {
 
     public function render_page(): void {
         if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( esc_html__( 'You do not have permission to access this page.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'You do not have permission to access this page.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         $action = sanitize_key( $_GET['action'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -80,7 +82,7 @@ class AdminPage {
 
     private function handle_import(): void {
         if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( esc_html__( 'Insufficient permissions.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'Insufficient permissions.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         check_admin_referer( self::IMPORT_NONCE_ACTION, self::IMPORT_NONCE_NAME );
@@ -90,22 +92,28 @@ class AdminPage {
             : null;
 
         if ( ! $raw ) {
-            wp_die( esc_html__( 'No file was uploaded.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'No file was uploaded.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
-        // Normalise single-file and multi-file $_FILES shapes into a list.
+        // The free plugin accepts exactly one file per import. `name` being an
+        // array means a multi-file (`[]`-suffixed) submission slipped through —
+        // the form itself no longer offers `multiple`, so this only happens on a
+        // hand-crafted/legacy request. Reject with an upsell notice rather than
+        // silently processing only the first file.
         if ( is_array( $raw['name'] ) ) {
-            $files = [];
-            foreach ( $raw['name'] as $i => $name ) {
-                $files[] = [
-                    'name'     => $name,
-                    'tmp_name' => $raw['tmp_name'][ $i ],
-                    'error'    => $raw['error'][ $i ],
-                ];
-            }
-        } else {
-            $files = [ $raw ];
+            $this->set_notice(
+                'error',
+                sprintf(
+                    /* translators: %s is the Pro add-on upsell URL */
+                    __( 'Only one file can be imported at a time. The Pro add-on converts multiple files in a single batch — %s', 'jhmg-converter-divi-to-elementor' ),
+                    self::PRO_UPSELL_URL
+                )
+            );
+            wp_safe_redirect( admin_url( 'tools.php?page=' . self::MENU_SLUG ) );
+            exit;
         }
+
+        $file = $raw;
 
         $post_type = sanitize_key( $_POST['jhmgcofo_post_type'] ?? 'page' );
         if ( ! in_array( $post_type, [ 'page', 'post' ], true ) ) {
@@ -118,35 +126,49 @@ class AdminPage {
         }
 
         $importer = new BatchImporter();
-        $results  = [];
 
-        foreach ( $files as $file ) {
-            if ( $file['error'] !== UPLOAD_ERR_OK ) {
-                $results[] = [
+        if ( $file['error'] !== UPLOAD_ERR_OK ) {
+            $results = [
+                [
                     'title'   => sanitize_file_name( $file['name'] ),
                     'post_id' => 0,
                     'success' => false,
                     'error'   => $this->upload_error_message( (int) $file['error'] ),
-                ];
-                continue;
-            }
-
+                ],
+            ];
+        } else {
             $json = file_get_contents( $file['tmp_name'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
             if ( $json === false ) {
-                $results[] = [
-                    'title'   => sanitize_file_name( $file['name'] ),
-                    'post_id' => 0,
-                    'success' => false,
-                    'error'   => __( 'Could not read the uploaded file.', 'jhmg-converter-for-divi-to-elementor' ),
+                $results = [
+                    [
+                        'title'   => sanitize_file_name( $file['name'] ),
+                        'post_id' => 0,
+                        'success' => false,
+                        'error'   => __( 'Could not read the uploaded file.', 'jhmg-converter-divi-to-elementor' ),
+                    ],
                 ];
-                continue;
-            }
+            } else {
+                $results = $importer->import( $json, $file['name'], [
+                    'post_type'   => $post_type,
+                    'post_status' => $post_status,
+                ] );
 
-            $file_results = $importer->import( $json, $file['name'], [
-                'post_type'   => $post_type,
-                'post_status' => $post_status,
-            ] );
-            $results = array_merge( $results, $file_results );
+                // Theme Builder rejection → admin error notice, not a "Failed" row.
+                // DiviParser::parse_layouts() throws on et_theme_builder JSON;
+                // BatchImporter converts that exception into a single failed result
+                // carrying the exception message verbatim (so a try/catch here can
+                // never fire — the importer swallows it by design). Exact-match the
+                // parser's message constant to divert this one case to the same
+                // notice + redirect path the multi-file rejection uses; every other
+                // parse/import failure keeps the batch-results rendering.
+                if ( count( $results ) === 1
+                    && empty( $results[0]['success'] )
+                    && $results[0]['error'] === \DiviElementorConverter\Converter\DiviParser::THEME_BUILDER_PRO_MESSAGE ) {
+                    $this->set_notice( 'error', $results[0]['error'] );
+                    wp_safe_redirect( admin_url( 'tools.php?page=' . self::MENU_SLUG ) );
+                    exit;
+                }
+            }
         }
 
         $import_id = $this->generate_import_id();
@@ -167,7 +189,7 @@ class AdminPage {
 
     private function handle_publish(): void {
         if ( ! current_user_can( 'manage_options' ) ) {
-            wp_die( esc_html__( 'Insufficient permissions.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'Insufficient permissions.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         $post_id   = absint( wp_unslash( $_GET['post_id'] ?? 0 ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- nonce checked below
@@ -176,7 +198,7 @@ class AdminPage {
         check_admin_referer( 'jhmgcofo_publish_' . $post_id );
 
         if ( $post_id <= 0 ) {
-            wp_die( esc_html__( 'Invalid post ID.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'Invalid post ID.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         wp_update_post( [
@@ -197,6 +219,27 @@ class AdminPage {
         exit;
     }
 
+    /** Queue a one-time admin notice, rendered and consumed by render_notice(). */
+    private function set_notice( string $type, string $message ): void {
+        set_transient( self::NOTICE_TRANSIENT, [ 'type' => $type, 'message' => $message ], 45 );
+    }
+
+    /** Render (and consume) a queued admin notice, if one is pending. */
+    private function render_notice(): void {
+        $notice = get_transient( self::NOTICE_TRANSIENT );
+        if ( ! is_array( $notice ) ) {
+            return;
+        }
+        delete_transient( self::NOTICE_TRANSIENT );
+
+        $css_class = $notice['type'] === 'error' ? 'notice-error' : 'notice-warning';
+        printf(
+            '<div class="notice %s is-dismissible"><p>%s</p></div>',
+            esc_attr( $css_class ),
+            esc_html( $notice['message'] )
+        );
+    }
+
     private function generate_import_id(): string {
         return function_exists( 'wp_generate_uuid4' )
             ? wp_generate_uuid4()
@@ -205,16 +248,16 @@ class AdminPage {
 
     private function upload_error_message( int $code ): string {
         $messages = [
-            UPLOAD_ERR_INI_SIZE   => __( 'File exceeds server upload limit.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_FORM_SIZE  => __( 'File exceeds form upload limit.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_PARTIAL    => __( 'File was only partially uploaded.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_NO_FILE    => __( 'No file was selected.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_NO_TMP_DIR => __( 'Server is missing a temporary folder.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_CANT_WRITE => __( 'Failed to write file to server.', 'jhmg-converter-for-divi-to-elementor' ),
-            UPLOAD_ERR_EXTENSION  => __( 'Upload stopped by server extension.', 'jhmg-converter-for-divi-to-elementor' ),
+            UPLOAD_ERR_INI_SIZE   => __( 'File exceeds server upload limit.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_FORM_SIZE  => __( 'File exceeds form upload limit.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_PARTIAL    => __( 'File was only partially uploaded.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_NO_FILE    => __( 'No file was selected.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_NO_TMP_DIR => __( 'Server is missing a temporary folder.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_CANT_WRITE => __( 'Failed to write file to server.', 'jhmg-converter-divi-to-elementor' ),
+            UPLOAD_ERR_EXTENSION  => __( 'Upload stopped by server extension.', 'jhmg-converter-divi-to-elementor' ),
         ];
         /* translators: %d is the numeric upload error code */
-        return $messages[ $code ] ?? sprintf( __( 'Unknown upload error (code %d).', 'jhmg-converter-for-divi-to-elementor' ), (int) $code );
+        return $messages[ $code ] ?? sprintf( __( 'Unknown upload error (code %d).', 'jhmg-converter-divi-to-elementor' ), (int) $code );
     }
 
     // ------------------------------------------------------------------
@@ -224,7 +267,8 @@ class AdminPage {
     private function render_list(): void {
         ?>
         <div class="wrap dec-wrap">
-            <h1 class="wp-heading-inline"><?php esc_html_e( 'Divi to Elementor Converter', 'jhmg-converter-for-divi-to-elementor' ); ?></h1>
+            <h1 class="wp-heading-inline"><?php esc_html_e( 'Divi to Elementor Converter', 'jhmg-converter-divi-to-elementor' ); ?></h1>
+            <?php $this->render_notice(); ?>
             <div class="dec-layout-with-sidebar">
                 <div class="dec-layout-main">
                     <?php $this->render_import_section(); ?>
@@ -241,31 +285,46 @@ class AdminPage {
         ?>
         <div class="dec-sidebar">
 
+            <div class="dec-sidebar-card dec-sidebar-card--pro">
+                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Go Pro — $49/yr', 'jhmg-converter-divi-to-elementor' ); ?></h3>
+                <ul class="dec-sidebar-pro-features">
+                    <li><?php esc_html_e( 'Batch conversion — every layout, every file, one run', 'jhmg-converter-divi-to-elementor' ); ?></li>
+                    <li><?php esc_html_e( 'WooCommerce widgets — product modules mapped to Elementor Pro', 'jhmg-converter-divi-to-elementor' ); ?></li>
+                    <li><?php esc_html_e( 'Theme Builder import — headers and footers, converted', 'jhmg-converter-divi-to-elementor' ); ?></li>
+                </ul>
+                <a href="<?php echo esc_url( self::PRO_UPSELL_URL ); ?>"
+                   class="button button-primary dec-sidebar-pro-link"
+                   target="_blank"
+                   rel="noopener noreferrer">
+                    <?php esc_html_e( 'Get Divi to Elementor Pro →', 'jhmg-converter-divi-to-elementor' ); ?>
+                </a>
+            </div>
+
             <div class="dec-sidebar-card dec-sidebar-card--promo">
-                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Also by JHMG', 'jhmg-converter-for-divi-to-elementor' ); ?></h3>
+                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Also by JHMG', 'jhmg-converter-divi-to-elementor' ); ?></h3>
                 <div class="dec-sidebar-promo">
                     <div class="dec-sidebar-promo-icon">⇄</div>
                     <div>
-                        <strong class="dec-sidebar-promo-name"><?php esc_html_e( 'Elementor to Divi Converter', 'jhmg-converter-for-divi-to-elementor' ); ?></strong>
-                        <p class="dec-sidebar-promo-desc"><?php esc_html_e( 'Need to go the other direction? Convert Elementor layouts to Divi with our companion plugin.', 'jhmg-converter-for-divi-to-elementor' ); ?></p>
+                        <strong class="dec-sidebar-promo-name"><?php esc_html_e( 'Elementor to Divi Converter', 'jhmg-converter-divi-to-elementor' ); ?></strong>
+                        <p class="dec-sidebar-promo-desc"><?php esc_html_e( 'Need to go the other direction? Convert Elementor layouts to Divi with our companion plugin.', 'jhmg-converter-divi-to-elementor' ); ?></p>
                         <a href="https://wordpress.org/plugins/jhmg-converter-for-elementor-to-divi/"
                            class="button dec-sidebar-promo-link"
                            target="_blank"
                            rel="noopener noreferrer">
-                            <?php esc_html_e( 'View on WordPress.org →', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                            <?php esc_html_e( 'View on WordPress.org →', 'jhmg-converter-divi-to-elementor' ); ?>
                         </a>
                     </div>
                 </div>
             </div>
 
             <div class="dec-sidebar-card dec-sidebar-card--donate">
-                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Enjoying the Plugin?', 'jhmg-converter-for-divi-to-elementor' ); ?></h3>
-                <p class="dec-sidebar-donate-desc"><?php esc_html_e( 'If this plugin saved you time, consider showing your appreciation with a small donation. It helps keep the plugin maintained and improved.', 'jhmg-converter-for-divi-to-elementor' ); ?></p>
+                <h3 class="dec-sidebar-card-title"><?php esc_html_e( 'Enjoying the Plugin?', 'jhmg-converter-divi-to-elementor' ); ?></h3>
+                <p class="dec-sidebar-donate-desc"><?php esc_html_e( 'If this plugin saved you time, consider showing your appreciation with a small donation. It helps keep the plugin maintained and improved.', 'jhmg-converter-divi-to-elementor' ); ?></p>
                 <form action="https://www.paypal.com/donate" method="post" target="_top" class="dec-sidebar-donate-form">
                     <input type="hidden" name="hosted_button_id" value="PNMHRFF94M2Y2">
                     <input type="image" src="https://www.paypal.com/en_US/i/btn/btn_donate_LG.gif" border="0" name="submit"
-                        title="<?php esc_attr_e( 'PayPal - The safer, easier way to pay online!', 'jhmg-converter-for-divi-to-elementor' ); ?>"
-                        alt="<?php esc_attr_e( 'Donate with PayPal button', 'jhmg-converter-for-divi-to-elementor' ); ?>">
+                        title="<?php esc_attr_e( 'PayPal - The safer, easier way to pay online!', 'jhmg-converter-divi-to-elementor' ); ?>"
+                        alt="<?php esc_attr_e( 'Donate with PayPal button', 'jhmg-converter-divi-to-elementor' ); ?>">
                 </form>
             </div>
 
@@ -280,9 +339,9 @@ class AdminPage {
     private function render_import_section(): void {
         ?>
         <div class="dec-import-section">
-            <h2><?php esc_html_e( 'Import Divi Layout JSON', 'jhmg-converter-for-divi-to-elementor' ); ?></h2>
+            <h2><?php esc_html_e( 'Import Divi Layout JSON', 'jhmg-converter-divi-to-elementor' ); ?></h2>
             <p class="dec-description">
-                <?php esc_html_e( 'Upload one or more Divi Builder JSON exports. Single-layout and multi-layout (Builder Library) exports are both supported — each layout becomes its own Elementor draft page.', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                <?php esc_html_e( 'Upload a single Divi JSON export — a standard page export or a Builder Library file. The first layout in the file is converted into an Elementor draft page.', 'jhmg-converter-divi-to-elementor' ); ?>
             </p>
 
             <form method="post" enctype="multipart/form-data" action="" class="dec-import-form">
@@ -292,36 +351,36 @@ class AdminPage {
                 <div class="dec-import-fields">
                     <div class="dec-import-field">
                         <label for="jhmgcofo_import_file">
-                            <strong><?php esc_html_e( 'File', 'jhmg-converter-for-divi-to-elementor' ); ?></strong>
+                            <strong><?php esc_html_e( 'File', 'jhmg-converter-divi-to-elementor' ); ?></strong>
                         </label>
-                        <input type="file" id="jhmgcofo_import_file" name="jhmgcofo_import_file[]" accept=".json" multiple required>
-                        <p class="description"><?php esc_html_e( 'Accepted: one or more .json files (Divi layout or Builder Library exports)', 'jhmg-converter-for-divi-to-elementor' ); ?></p>
+                        <input type="file" id="jhmgcofo_import_file" name="jhmgcofo_import_file" accept=".json" required>
+                        <p class="description"><?php esc_html_e( 'Accepted: a single .json file (Divi layout or Builder Library export)', 'jhmg-converter-divi-to-elementor' ); ?></p>
                     </div>
 
                     <div class="dec-import-field">
                         <label for="jhmgcofo_post_type">
-                            <strong><?php esc_html_e( 'Create as', 'jhmg-converter-for-divi-to-elementor' ); ?></strong>
+                            <strong><?php esc_html_e( 'Create as', 'jhmg-converter-divi-to-elementor' ); ?></strong>
                         </label>
                         <select id="jhmgcofo_post_type" name="jhmgcofo_post_type">
-                            <option value="page"><?php esc_html_e( 'Page', 'jhmg-converter-for-divi-to-elementor' ); ?></option>
-                            <option value="post"><?php esc_html_e( 'Post', 'jhmg-converter-for-divi-to-elementor' ); ?></option>
+                            <option value="page"><?php esc_html_e( 'Page', 'jhmg-converter-divi-to-elementor' ); ?></option>
+                            <option value="post"><?php esc_html_e( 'Post', 'jhmg-converter-divi-to-elementor' ); ?></option>
                         </select>
                     </div>
 
                     <div class="dec-import-field">
                         <label for="jhmgcofo_post_status">
-                            <strong><?php esc_html_e( 'Status', 'jhmg-converter-for-divi-to-elementor' ); ?></strong>
+                            <strong><?php esc_html_e( 'Status', 'jhmg-converter-divi-to-elementor' ); ?></strong>
                         </label>
                         <select id="jhmgcofo_post_status" name="jhmgcofo_post_status">
-                            <option value="draft"><?php esc_html_e( 'Draft (recommended)', 'jhmg-converter-for-divi-to-elementor' ); ?></option>
-                            <option value="publish"><?php esc_html_e( 'Published', 'jhmg-converter-for-divi-to-elementor' ); ?></option>
+                            <option value="draft"><?php esc_html_e( 'Draft (recommended)', 'jhmg-converter-divi-to-elementor' ); ?></option>
+                            <option value="publish"><?php esc_html_e( 'Published', 'jhmg-converter-divi-to-elementor' ); ?></option>
                         </select>
                     </div>
                 </div>
 
                 <div class="dec-import-submit">
                     <button type="submit" class="button button-primary">
-                        <?php esc_html_e( 'Import and Convert', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                        <?php esc_html_e( 'Import and Convert', 'jhmg-converter-divi-to-elementor' ); ?>
                     </button>
                 </div>
             </form>
@@ -337,13 +396,13 @@ class AdminPage {
         $import_id = sanitize_key( $_GET['import_id'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
         if ( $import_id === '' ) {
-            wp_die( esc_html__( 'No import ID provided.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'No import ID provided.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         $results = get_transient( 'jhmgcofo_batch_' . $import_id );
 
         if ( ! is_array( $results ) ) {
-            wp_die( esc_html__( 'Import results not found or expired. Results are kept for one hour.', 'jhmg-converter-for-divi-to-elementor' ) );
+            wp_die( esc_html__( 'Import results not found or expired. Results are kept for one hour.', 'jhmg-converter-divi-to-elementor' ) );
         }
 
         $total     = count( $results );
@@ -351,11 +410,11 @@ class AdminPage {
         $failed    = $total - $succeeded;
         ?>
         <div class="wrap dec-wrap">
-            <h1><?php esc_html_e( 'Conversion Results', 'jhmg-converter-for-divi-to-elementor' ); ?></h1>
+            <h1><?php esc_html_e( 'Conversion Results', 'jhmg-converter-divi-to-elementor' ); ?></h1>
 
             <div class="dec-result-actions">
                 <a href="<?php echo esc_url( admin_url( 'tools.php?page=' . self::MENU_SLUG ) ); ?>" class="button">
-                    &larr; <?php esc_html_e( 'Back to converter', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                    &larr; <?php esc_html_e( 'Back to converter', 'jhmg-converter-divi-to-elementor' ); ?>
                 </a>
             </div>
 
@@ -363,14 +422,14 @@ class AdminPage {
                 <span class="dec-summary-stat dec-summary-stat--total">
                     <?php
                     /* translators: %d is the number of layouts processed */
-                    printf( esc_html__( '%d layout(s) processed', 'jhmg-converter-for-divi-to-elementor' ), absint( $total ) );
+                    printf( esc_html__( '%d layout(s) processed', 'jhmg-converter-divi-to-elementor' ), absint( $total ) );
                     ?>
                 </span>
                 <?php if ( $succeeded > 0 ) : ?>
                 <span class="dec-summary-stat dec-summary-stat--ok">
                     <?php
                     /* translators: %d is the number of successfully converted layouts */
-                    printf( esc_html__( '%d converted', 'jhmg-converter-for-divi-to-elementor' ), absint( $succeeded ) );
+                    printf( esc_html__( '%d converted', 'jhmg-converter-divi-to-elementor' ), absint( $succeeded ) );
                     ?>
                 </span>
                 <?php endif; ?>
@@ -378,7 +437,7 @@ class AdminPage {
                 <span class="dec-summary-stat dec-summary-stat--fail">
                     <?php
                     /* translators: %d is the number of layouts that failed */
-                    printf( esc_html__( '%d failed', 'jhmg-converter-for-divi-to-elementor' ), absint( $failed ) );
+                    printf( esc_html__( '%d failed', 'jhmg-converter-divi-to-elementor' ), absint( $failed ) );
                     ?>
                 </span>
                 <?php endif; ?>
@@ -387,34 +446,37 @@ class AdminPage {
             <table class="wp-list-table widefat fixed striped dec-batch-table">
                 <thead>
                     <tr>
-                        <th class="column-title column-primary"><?php esc_html_e( 'Title', 'jhmg-converter-for-divi-to-elementor' ); ?></th>
-                        <th class="column-status"><?php esc_html_e( 'Status', 'jhmg-converter-for-divi-to-elementor' ); ?></th>
-                        <th class="column-actions"><?php esc_html_e( 'Actions', 'jhmg-converter-for-divi-to-elementor' ); ?></th>
+                        <th class="column-title column-primary"><?php esc_html_e( 'Title', 'jhmg-converter-divi-to-elementor' ); ?></th>
+                        <th class="column-status"><?php esc_html_e( 'Status', 'jhmg-converter-divi-to-elementor' ); ?></th>
+                        <th class="column-actions"><?php esc_html_e( 'Actions', 'jhmg-converter-divi-to-elementor' ); ?></th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ( $results as $result ) : ?>
                     <tr>
                         <td class="column-title column-primary">
-                            <strong><?php echo esc_html( $result['title'] ?: __( '(no title)', 'jhmg-converter-for-divi-to-elementor' ) ); ?></strong>
+                            <strong><?php echo esc_html( $result['title'] ?: __( '(no title)', 'jhmg-converter-divi-to-elementor' ) ); ?></strong>
                         </td>
                         <td class="column-status">
                             <?php if ( $result['success'] ) : ?>
-                                <span class="dec-status dec-status--converted">&#10003; <?php esc_html_e( 'Converted', 'jhmg-converter-for-divi-to-elementor' ); ?></span>
+                                <span class="dec-status dec-status--converted">&#10003; <?php esc_html_e( 'Converted', 'jhmg-converter-divi-to-elementor' ); ?></span>
                             <?php else : ?>
-                                <span class="dec-status dec-status--error">&#10007; <?php esc_html_e( 'Failed', 'jhmg-converter-for-divi-to-elementor' ); ?></span>
+                                <span class="dec-status dec-status--error">&#10007; <?php esc_html_e( 'Failed', 'jhmg-converter-divi-to-elementor' ); ?></span>
                                 <?php if ( ! empty( $result['error'] ) ) : ?>
                                     <br><small class="dec-error-msg"><?php echo esc_html( $result['error'] ); ?></small>
                                 <?php endif; ?>
                             <?php endif; ?>
+                            <?php foreach ( $result['report']['warnings'] ?? [] as $warning ) : ?>
+                                <br><small class="dec-warning-msg">&#9888; <?php echo esc_html( $warning ); ?></small>
+                            <?php endforeach; ?>
                         </td>
                         <td class="column-actions">
                             <?php if ( $result['success'] && $result['post_id'] > 0 ) : ?>
                                 <a href="<?php echo esc_url( get_edit_post_link( $result['post_id'] ) ); ?>" class="button button-small">
-                                    <?php esc_html_e( 'Edit in Elementor', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                                    <?php esc_html_e( 'Edit in Elementor', 'jhmg-converter-divi-to-elementor' ); ?>
                                 </a>
                                 <a href="<?php echo esc_url( (string) get_permalink( $result['post_id'] ) ); ?>" class="button button-small" target="_blank" rel="noopener">
-                                    <?php esc_html_e( 'Preview', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                                    <?php esc_html_e( 'Preview', 'jhmg-converter-divi-to-elementor' ); ?>
                                 </a>
                                 <?php if ( get_post_status( $result['post_id'] ) !== 'publish' ) :
                                     $publish_url = wp_nonce_url(
@@ -432,10 +494,10 @@ class AdminPage {
                                     );
                                 ?>
                                     <a href="<?php echo esc_url( $publish_url ); ?>" class="button button-small button-primary">
-                                        <?php esc_html_e( 'Publish', 'jhmg-converter-for-divi-to-elementor' ); ?>
+                                        <?php esc_html_e( 'Publish', 'jhmg-converter-divi-to-elementor' ); ?>
                                     </a>
                                 <?php else : ?>
-                                    <span class="dec-published-label">&#10003; <?php esc_html_e( 'Published', 'jhmg-converter-for-divi-to-elementor' ); ?></span>
+                                    <span class="dec-published-label">&#10003; <?php esc_html_e( 'Published', 'jhmg-converter-divi-to-elementor' ); ?></span>
                                 <?php endif; ?>
                             <?php else : ?>
                                 &mdash;
@@ -474,6 +536,7 @@ class AdminPage {
 .dec-status--converted { color: #2e7d32; }
 .dec-status--error     { color: #c62828; }
 .dec-error-msg         { color: #c62828; font-size: 11px; }
+.dec-warning-msg       { color: #9a6700; font-size: 11px; }
 
 /* Batch summary */
 .dec-batch-summary { display: flex; gap: 12px; margin: 16px 0 20px; flex-wrap: wrap; }
@@ -503,9 +566,15 @@ class AdminPage {
 /* Sidebar container */
 .dec-sidebar { display: flex; flex-direction: column; gap: 16px; }
 .dec-sidebar-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; box-shadow: 0 1px 6px rgba(0,0,0,.05); }
+.dec-sidebar-card--pro    { border-top: 3px solid #7c3aed; }
 .dec-sidebar-card--promo  { border-top: 3px solid #2271b1; }
 .dec-sidebar-card--donate { border-top: 3px solid #f97316; }
 .dec-sidebar-card-title   { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: #1e293b; }
+
+/* Go Pro block */
+.dec-sidebar-pro-features { margin: 0 0 14px; padding-left: 18px; font-size: 12px; color: #475569; line-height: 1.6; }
+.dec-sidebar-pro-features li { margin-bottom: 4px; }
+.dec-sidebar-pro-link.button { width: 100%; text-align: center; font-size: 12px; }
 
 /* Promo block */
 .dec-sidebar-promo      { display: flex; gap: 12px; align-items: flex-start; }

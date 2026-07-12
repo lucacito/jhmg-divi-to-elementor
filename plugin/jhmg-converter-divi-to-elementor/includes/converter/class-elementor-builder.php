@@ -60,19 +60,13 @@ class ElementorBuilder {
 		'fullwidth_menu'          => 'ekit-nav-menu',
 		'signup'                  => 'html',
 		'video_slider'            => 'video',
-		// WooCommerce modules map to Elementor Pro WooCommerce widgets.
-		'wc_title'                => 'woocommerce-product-title',
-		'wc_images'               => 'woocommerce-product-images',
-		'wc_price'                => 'woocommerce-product-price',
-		'wc_description'          => 'woocommerce-product-short-description',
-		'wc_add_to_cart'          => 'woocommerce-product-add-to-cart',
-		'wc_rating'               => 'woocommerce-product-rating',
-		'wc_reviews'              => 'woocommerce-product-comments',
-		'wc_breadcrumb'           => 'woocommerce-breadcrumb',
-		'wc_additional_info'      => 'woocommerce-product-additional-info',
-		'wc_related_products'     => 'woocommerce-product-related',
-		'wc_cart_notice'          => 'html',
 	];
+	// Divi WooCommerce modules require the Pro add-on — see convert_module()'s
+	// Pro-upsell skip branch below (which reports an upsell warning instead of
+	// mapping them). Mapping lives in Pro's WooModules class.
+
+	/** Upsell URL used in report warnings when a Pro-only feature is hit. */
+	private const PRO_UPSELL_URL = 'https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
 
 	/**
 	 * FontAwesome 5 unicode codepoint (hex, no prefix) → FA class suffix (no "fa-" prefix).
@@ -127,6 +121,14 @@ class ElementorBuilder {
 		'4_5' => 80,
 	];
 
+	/**
+	 * Report warnings collected during the most recent build() call, keyed by
+	 * Divi module tag to dedupe repeated occurrences of the same unsupported tag.
+	 *
+	 * @var array<string, string>
+	 */
+	private array $warnings = [];
+
 	// -----------------------------------------------------------------------
 	// Public API
 	// -----------------------------------------------------------------------
@@ -138,7 +140,8 @@ class ElementorBuilder {
 	 * @return array<int, array<string, mixed>>  Ready to pass to json_encode.
 	 */
 	public function build( array $nodes ): array {
-		$sections = [];
+		$this->warnings = [];
+		$sections       = [];
 		foreach ( $nodes as $node ) {
 			if ( $node->tag === 'section' ) {
 				foreach ( $this->convert_section( $node ) as $s ) {
@@ -147,6 +150,16 @@ class ElementorBuilder {
 			}
 		}
 		return $sections;
+	}
+
+	/**
+	 * Warnings accumulated during the most recent build() call (e.g. Pro-only
+	 * modules that were skipped). Empty array when nothing was skipped.
+	 *
+	 * @return string[]
+	 */
+	public function get_warnings(): array {
+		return array_values( $this->warnings );
 	}
 
 	// -----------------------------------------------------------------------
@@ -351,7 +364,27 @@ class ElementorBuilder {
 			return null;
 		}
 
+		if ( function_exists( 'apply_filters' ) ) {
+			$intercepted = apply_filters( 'jhmgcofo_convert_module', null, $node );
+			if ( is_array( $intercepted ) ) {
+				return $intercepted;
+			}
+		}
+
 		$widget_type = self::WIDGET_MAP[ $node->tag ] ?? null;
+
+		// WooCommerce modules require the Pro add-on. Skip the module entirely
+		// (rather than falling through to the generic "unconverted" html
+		// fallback below) and record an upsell warning that BatchImporter
+		// surfaces in the conversion report.
+		if ( $widget_type === null && str_starts_with( $node->tag, 'wc_' ) ) {
+			$this->warnings[ $node->tag ] = sprintf(
+				'WooCommerce module "%s" requires the Pro add-on — %s',
+				$node->tag,
+				self::PRO_UPSELL_URL
+			);
+			return null;
+		}
 
 		$widget_id = $this->uid();
 		if ( $widget_type !== null ) {
@@ -870,22 +903,6 @@ class ElementorBuilder {
 					}
 				}
 				return [];
-
-			// WooCommerce widgets render from WC product context; no extra settings needed.
-			case 'wc_title':
-			case 'wc_images':
-			case 'wc_price':
-			case 'wc_description':
-			case 'wc_add_to_cart':
-			case 'wc_rating':
-			case 'wc_reviews':
-			case 'wc_breadcrumb':
-			case 'wc_additional_info':
-			case 'wc_related_products':
-				return [];
-
-			case 'wc_cart_notice':
-				return [ 'html' => '[woocommerce_cart]' ];
 
 			default:
 				return [];

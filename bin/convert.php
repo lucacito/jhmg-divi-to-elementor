@@ -41,6 +41,7 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 
 use DiviElementorConverter\Converter\DiviParser;
 use DiviElementorConverter\Converter\ElementorBuilder;
+use DiviElementorConverter\Pro\Converter\ThemeBuilderImporter;
 
 // ---------------------------------------------------------------------------
 // Argument parsing.
@@ -127,7 +128,10 @@ echo "Context: {$context}\n";
 
 if ( $context === 'et_theme_builder' ) {
 	// One file per layout (header, footer, body, unknown).
-	$layouts = $parser->parse_theme_builder_layouts( $json );
+	// Task 6 (free/Pro split): et_theme_builder parsing moved off free's
+	// DiviParser (free now rejects it — Theme Builder import is Pro-only) onto
+	// Pro's ThemeBuilderImporter, which this CLI dev tool now calls directly.
+	$layouts = ( new ThemeBuilderImporter() )->parse_theme_builder_layouts( $json );
 
 	foreach ( $layouts as $entry ) {
 		$elementor_data = $builder->build( $entry['nodes'] );

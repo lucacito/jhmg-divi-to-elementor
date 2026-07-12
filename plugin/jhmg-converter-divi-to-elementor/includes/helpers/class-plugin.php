@@ -28,6 +28,8 @@ class Plugin {
             ( new \DiviElementorConverter\Admin\AdminPage() )->init();
             add_action( 'admin_init', [ $this, 'maybe_redirect_on_activation' ] );
         }
+
+        do_action( 'jhmgcofo_loaded', $this );
     }
 
     public function maybe_redirect_on_activation(): void {

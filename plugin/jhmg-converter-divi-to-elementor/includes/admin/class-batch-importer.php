@@ -38,8 +38,12 @@ class BatchImporter {
         }
 
         if ( empty( $layouts ) ) {
-            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-for-divi-to-elementor' ) ) ];
+            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-divi-to-elementor' ) ) ];
         }
+
+        $max     = function_exists( 'apply_filters' ) ? (int) apply_filters( 'jhmgcofo_max_layouts', 1 ) : 1;
+        $skipped = max( 0, count( $layouts ) - $max );
+        $layouts = array_slice( $layouts, 0, $max );
 
         $results = [];
         foreach ( $layouts as $layout ) {
@@ -47,17 +51,25 @@ class BatchImporter {
             $results[] = $this->import_layout( $layout['nodes'], $title, $post_type, $post_status );
         }
 
+        if ( $skipped > 0 ) {
+            $results[ array_key_last( $results ) ]['report']['warnings'][] = sprintf(
+                'This export contains %d more layout(s). The Pro add-on converts every layout in one run — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell',
+                $skipped
+            );
+        }
+
         return $results;
     }
 
     private function import_layout( array $nodes, string $title, string $post_type, string $post_status ): array {
         try {
-            $elementor_data = $this->builder->build( $nodes );
+            $elementor_data  = $this->builder->build( $nodes );
+            $module_warnings = $this->builder->get_warnings();
 
             if ( empty( $elementor_data ) ) {
                 return $this->fail_result(
                     $title,
-                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-for-divi-to-elementor' )
+                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-divi-to-elementor' )
                 );
             }
 
@@ -82,12 +94,16 @@ class BatchImporter {
             update_post_meta( $post_id, '_elementor_version', '3.21.0' );
             update_post_meta( $post_id, '_elementor_template_type', 'wp-page' );
 
-            return [
+            $result = [
                 'title'   => $title,
                 'post_id' => $post_id,
                 'success' => true,
                 'error'   => '',
             ];
+            if ( ! empty( $module_warnings ) ) {
+                $result['report']['warnings'] = $module_warnings;
+            }
+            return $result;
         } catch ( \Throwable $e ) {
             return $this->fail_result( $title, $e->getMessage() );
         }
