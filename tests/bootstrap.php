@@ -449,10 +449,15 @@ if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
 }
 
 // NOTE: unlike the sibling repo's bootstrap, this file intentionally does NOT
-// require the plugin's main file. The existing 45 unit tests construct
+// require the free plugin's main file. The existing 45 unit tests construct
 // classes directly via the composer/mirror autoloaders above, and no test
 // currently needs a bootstrapped Plugin::instance() singleton or the
 // register_activation_hook()/add_action('plugins_loaded', ...) side effects
 // that requiring the main file would trigger. If a future seam/integration
 // test needs the fully-booted plugin, require the main file there (or add a
 // guarded require here then) rather than paying that cost for every test run.
+
+// Require the Pro plugin's main file to define JHMGCOFOP_* constants for ProPluginTest.
+if ( file_exists( dirname( __DIR__ ) . '/plugin/jhmg-converter-divi-to-elementor-pro/jhmg-converter-divi-to-elementor-pro.php' ) ) {
+	require_once dirname( __DIR__ ) . '/plugin/jhmg-converter-divi-to-elementor-pro/jhmg-converter-divi-to-elementor-pro.php';
+}

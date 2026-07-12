@@ -4,7 +4,8 @@
   },
   "autoload": {
     "psr-4": {
-      "DiviElementorConverter\\": "plugin/jhmg-converter-divi-to-elementor/includes/"
+      "DiviElementorConverter\\": "plugin/jhmg-converter-divi-to-elementor/includes/",
+      "DiviElementorConverter\\Pro\\": "plugin/jhmg-converter-divi-to-elementor-pro/includes/"
     }
   },
   "autoload-dev": {
