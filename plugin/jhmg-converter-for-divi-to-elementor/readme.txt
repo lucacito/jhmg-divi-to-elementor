@@ -93,6 +93,10 @@ The free plugin converts one JSON file per import — the first layout inside it
 
 The converter maps Divi module settings (colors, fonts, spacing, borders, backgrounds) to their Elementor equivalents. Most visual properties transfer correctly. Some advanced Divi-specific features (custom CSS classes, Divi shortcode-based modules not in the supported list) are passed through as HTML or skipped. Divi's WooCommerce modules require the Pro add-on — the free plugin skips them and notes it in the conversion report.
 
+= What happens to Code modules and custom CSS in my Divi export? =
+
+They are sanitized before anything is saved. An uploaded JSON file is untrusted input, so markup from Divi Code modules is filtered through WordPress's standard post allowlist (`wp_kses_post()`) — scripts, styles, iframes, form elements and inline event handlers are removed — and imported custom CSS has markup, `@import` rules and script URLs stripped. Whenever something is removed, the conversion report tells you which module it came from so you can rebuild that piece with an Elementor widget. The plugin never asks you to paste in code and never evaluates any code from an import.
+
 = Can I convert Theme Builder headers and footers? =
 
 That requires the Pro add-on. The free plugin will show an error with a link to Pro if you upload a Theme Builder (et_theme_builder) export. Pro imports headers and footers as Elementor Library templates; displaying them as actual theme templates also requires Elementor Pro's own Theme Builder.
@@ -114,6 +118,8 @@ After conversion, the plugin redirects you to a results page with direct links t
 * 35+ Divi modules mapped to Elementor equivalents.
 * Supports et_builder and et_builder_layouts export formats.
 * Conversion reports flag WooCommerce modules and Theme Builder exports with a link to the Pro add-on.
+* Imported markup is filtered through `wp_kses_post()` and imported CSS is stripped of markup, `@import` rules and script URLs; removals are reported per module.
+* Uploads are restricted to a single `.json` file, with the filename sanitized and the upload verified before it is read.
 
 == Upgrade Notice ==
 

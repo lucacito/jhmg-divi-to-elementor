@@ -6,9 +6,11 @@
  * Constructor-parameterized per product; see sync script for consumers.
  * API contract (frozen): /api/license/{activate,validate,deactivate}, /api/plugin/update-check
  * Error codes: invalid_key | product_mismatch | license_not_usable | rate_limited | invalid_request
- * Enforcement policy (frozen): SOFT. License state gates update delivery + admin notices only —
- * it must never lock plugin features. status_notice() only ever informs; callers must not use
- * get_state()/get_key() to disable functionality.
+ * Enforcement policy: SOFT for the converter Pros (frozen — license state gates update
+ * delivery + admin notices only; conversion features never lock). Documented exception:
+ * the AI Editor for Divi 5 gates its premium tools behind a sticky unlock that only an
+ * explicit server verdict of `revoked` or `invalid` re-locks (see its Licensing adapter);
+ * lapse (expired/canceled) never locks features anywhere.
  */
 
 namespace DiviElementorConverter\Pro\Licensing;

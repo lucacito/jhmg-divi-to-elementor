@@ -16,8 +16,15 @@ class DiviParser {
 	 * error against this constant to divert the Theme Builder rejection to an
 	 * admin error notice (with the upsell link) instead of a generic "Failed"
 	 * batch-result row.
+	 *
+	 * Deliberately carries no URL. PHPCS requires exception messages to be run
+	 * through an escaping function, and esc_html() would turn the `&` in a query
+	 * string into `&#038;` — breaking the very identity comparison this constant
+	 * exists for. With no escapable character in it, esc_html() is a no-op and
+	 * the comparison holds. AdminPage appends the upsell URL when it renders the
+	 * notice.
 	 */
-	public const THEME_BUILDER_PRO_MESSAGE = 'Theme Builder exports require the Pro add-on — https://divi5lab.com/plugins/divi-to-elementor?utm_source=plugin&utm_medium=upsell';
+	public const THEME_BUILDER_PRO_MESSAGE = 'Theme Builder exports require the Pro add-on.';
 
 	/**
 	 * Parse a Divi export JSON file and return top-level DiviNode array.
@@ -37,7 +44,7 @@ class DiviParser {
 		}
 
 		if ( ( $data['context'] ?? '' ) === 'et_theme_builder' ) {
-			throw new \InvalidArgumentException( self::THEME_BUILDER_PRO_MESSAGE );
+			throw new \InvalidArgumentException( esc_html( self::THEME_BUILDER_PRO_MESSAGE ) );
 		}
 
 		$nodes = [];
@@ -100,7 +107,7 @@ class DiviParser {
 		$context = $data['context'] ?? '';
 
 		if ( $context === 'et_theme_builder' ) {
-			throw new \InvalidArgumentException( self::THEME_BUILDER_PRO_MESSAGE );
+			throw new \InvalidArgumentException( esc_html( self::THEME_BUILDER_PRO_MESSAGE ) );
 		}
 
 		// Divi Builder Library export — one entry per saved layout.

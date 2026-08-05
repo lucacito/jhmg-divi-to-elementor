@@ -3,3 +3,7 @@ node_modules/
 test-results/
 visual-diffs/
 *.zip
+wporg-svn/
+output/
+.DS_Store
+.phpunit.result.cache

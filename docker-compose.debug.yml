@@ -1,0 +1,84 @@
+# Clean-install WP_DEBUG stack for the wordpress.org review checklist.
+#
+# Deliberately separate from docker-compose.yml: that one is the dev stack
+# (WP 6.2, Divi theme, Pro plugin mounted, no debug constants). The review
+# checklist asks for a *clean* install with WP_DEBUG on, so this one runs the
+# current WordPress release with nothing mounted but the free plugin.
+#
+# Run it with bin/debug-stack.sh — that script owns the install/activate steps.
+# Port 8002 and the jhmgcofo-debug project name keep it off the dev stack's toes.
+
+# The official wordpress image's wp-config.php resolves ALL of this at *runtime*
+# from the environment — nothing is baked into the file:
+#
+#   define( 'DB_HOST', getenv_docker('WORDPRESS_DB_HOST', 'mysql') );
+#   define( 'WP_DEBUG', !!getenv_docker('WORDPRESS_DEBUG', '') );
+#   if ($configExtra = getenv_docker('WORDPRESS_CONFIG_EXTRA', '')) { eval($configExtra); }
+#
+# So every container that runs WordPress code — the web server AND wp-cli — needs
+# the identical block, WORDPRESS_CONFIG_EXTRA included. Give wp-cli less and it
+# does not error; it quietly falls back to the image defaults, connecting to host
+# `mysql` and reporting WP_DEBUG_LOG=false while the web container has it true.
+# That is a worse failure than a crash, so both services share this anchor.
+x-wp-env: &wp-env
+  WORDPRESS_DB_HOST: db:3306
+  WORDPRESS_DB_USER: wp
+  WORDPRESS_DB_PASSWORD: wp
+  WORDPRESS_DB_NAME: wordpress
+  WORDPRESS_DEBUG: 1
+  WORDPRESS_CONFIG_EXTRA: |
+    define( 'WP_DEBUG_LOG', true );
+    define( 'WP_DEBUG_DISPLAY', true );
+    @ini_set( 'display_errors', 1 );
+    define( 'SCRIPT_DEBUG', true );
+    define( 'WP_DISABLE_FATAL_ERROR_HANDLER', true );
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+    volumes:
+      - debug_db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uwp", "-pwp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  wordpress:
+    image: wordpress:php8.3-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8002:80"
+    environment:
+      <<: *wp-env
+    volumes:
+      - debug_html:/var/www/html
+      - ./plugin/jhmg-converter-for-divi-to-elementor:/var/www/html/wp-content/plugins/jhmg-converter-for-divi-to-elementor:delegated
+      - ./fixtures:/var/www/html/fixtures:ro
+
+  # Long-lived wp-cli container sharing the webroot, so bin/debug-stack.sh can
+  # drive the install without needing wp-cli on the host.
+  cli:
+    image: wordpress:cli-php8.3
+    depends_on:
+      - wordpress
+    user: "33:33"
+    environment:
+      <<: *wp-env
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
+    volumes:
+      - debug_html:/var/www/html
+      - ./plugin/jhmg-converter-for-divi-to-elementor:/var/www/html/wp-content/plugins/jhmg-converter-for-divi-to-elementor:delegated
+      - ./fixtures:/var/www/html/fixtures:ro
+
+volumes:
+  debug_db:
+  debug_html:

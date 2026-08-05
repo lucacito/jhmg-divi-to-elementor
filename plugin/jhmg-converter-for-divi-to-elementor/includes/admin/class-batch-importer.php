@@ -38,7 +38,7 @@ class BatchImporter {
         }
 
         if ( empty( $layouts ) ) {
-            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-divi-to-elementor' ) ) ];
+            return [ $this->fail_result( $fallback_title, __( 'No layouts found in the file.', 'jhmg-converter-for-divi-to-elementor' ) ) ];
         }
 
         $max     = function_exists( 'apply_filters' ) ? (int) apply_filters( 'jhmgcofo_max_layouts', 1 ) : 1;
@@ -47,7 +47,11 @@ class BatchImporter {
 
         $results = [];
         foreach ( $layouts as $layout ) {
-            $title     = $layout['title'] !== '' ? $layout['title'] : $fallback_title;
+            // Layout titles come from the uploaded JSON. They become a post title
+            // and a transient result row, so strip them to plain text here rather
+            // than relying on every downstream consumer to escape.
+            $layout_title = sanitize_text_field( $layout['title'] );
+            $title        = $layout_title !== '' ? $layout_title : $fallback_title;
             $results[] = $this->import_layout( $layout['nodes'], $title, $post_type, $post_status );
         }
 
@@ -69,7 +73,7 @@ class BatchImporter {
             if ( empty( $elementor_data ) ) {
                 return $this->fail_result(
                     $title,
-                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-divi-to-elementor' )
+                    __( 'No Elementor sections were generated. The layout may be empty.', 'jhmg-converter-for-divi-to-elementor' )
                 );
             }
 

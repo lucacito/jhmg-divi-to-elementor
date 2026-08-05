@@ -4,11 +4,11 @@ Free plugin submitted to wordpress.org; pending review. When approval lands, run
 each step operator-confirmed by Lucas.
 
 ## 1. Confirm the real wp.org slug
-The approval email / SVN URL names the slug (expected: `jhmg-converter-divi-to-elementor`).
+The approval email / SVN URL names the slug (expected: `jhmg-converter-for-divi-to-elementor`).
 If it differs, update the Pro plugin's `Requires Plugins:` header
 (plugin/jhmg-converter-divi-to-elementor-pro/jhmg-converter-divi-to-elementor-pro.php) and re-release.
 Also verify the free plugin's `Text Domain:` matches the assigned slug (it now ships as
-`jhmg-converter-divi-to-elementor`); if wp.org assigned something else, sed the text domain
+`jhmg-converter-for-divi-to-elementor`); if wp.org assigned something else, sed the text domain
 across the free tree before the first SVN commit.
 
 ## 2. First SVN release = the TRIMMED free plugin
@@ -16,7 +16,7 @@ wp.org reviewed the fat 1.0.0 zip, but the first public release ships the trimme
 main, post pro-split merge). Nobody has downloaded the fat zip → keep `Stable tag: 1.0.0`.
 ```
 svn co https://plugins.svn.wordpress.org/<slug> wporg-svn && cd wporg-svn
-rsync -a --delete --exclude='.DS_Store' ../plugin/jhmg-converter-divi-to-elementor/ trunk/
+rsync -a --delete --exclude='.DS_Store' ../plugin/jhmg-converter-for-divi-to-elementor/ trunk/
 # assets (banner/icon/screenshots) from repo assets/ → assets/
 svn add --force trunk assets; svn status | grep '^!' | awk '{print $2}' | xargs -I{} svn rm {}
 svn cp trunk tags/1.0.0

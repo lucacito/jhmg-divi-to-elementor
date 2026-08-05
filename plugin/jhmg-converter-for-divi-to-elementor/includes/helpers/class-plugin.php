@@ -22,8 +22,6 @@ class Plugin {
     }
 
     public function register_hooks(): void {
-        ( new \DiviElementorConverter\Shortcodes() )->init();
-
         if ( is_admin() ) {
             ( new \DiviElementorConverter\Admin\AdminPage() )->init();
             add_action( 'admin_init', [ $this, 'maybe_redirect_on_activation' ] );

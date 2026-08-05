@@ -18,7 +18,7 @@ spl_autoload_register( function ( string $class ): void {
 	$relative   = ltrim( substr( $class, strlen( $prefix ) ), '\\' );
 	$parts      = explode( '\\', $relative );
 	$class_name = array_pop( $parts );
-	$base       = dirname( __DIR__ ) . '/plugin/jhmg-converter-divi-to-elementor/includes/';
+	$base       = dirname( __DIR__ ) . '/plugin/jhmg-converter-for-divi-to-elementor/includes/';
 	$dir        = $base . ( $parts ? implode( '/', array_map( 'strtolower', $parts ) ) . '/' : '' );
 	$file       = 'class-' . strtolower( preg_replace( '/([a-z])([A-Z])/', '$1-$2', $class_name ) ) . '.php';
 	$path       = $dir . $file;
@@ -84,6 +84,93 @@ if ( ! function_exists( 'esc_attr' ) ) {
 if ( ! function_exists( '__return_true' ) ) {
 	function __return_true() {
 		return true;
+	}
+}
+
+/*
+ * Sanitizer stubs used by the converter's import-hardening path.
+ *
+ * These mirror core's *observable behaviour* closely enough to assert on — they
+ * are deliberately not reimplementations. wp_kses_post() in particular is
+ * approximated by an allowlist-shaped stripper: it must remove the constructs
+ * the tests care about (script/style/iframe/form elements, on* handlers,
+ * javascript: URLs) and leave ordinary formatting markup alone.
+ */
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+	function sanitize_text_field( $str ): string {
+		$str = wp_strip_all_tags( (string) $str );
+		return trim( preg_replace( '/[\r\n\t ]+/', ' ', $str ) ?? '' );
+	}
+}
+
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+	function wp_strip_all_tags( $text ): string {
+		$text = preg_replace( '@<(script|style)[^>]*?>.*?</\\1>@si', '', (string) $text ) ?? '';
+		return trim( strip_tags( $text ) );
+	}
+}
+
+if ( ! function_exists( 'sanitize_html_class' ) ) {
+	function sanitize_html_class( $class, $fallback = '' ): string {
+		$sanitized = preg_replace( '/[^A-Za-z0-9_\-]/', '', (string) $class ) ?? '';
+		return $sanitized !== '' ? $sanitized : (string) $fallback;
+	}
+}
+
+if ( ! function_exists( 'sanitize_file_name' ) ) {
+	function sanitize_file_name( $filename ): string {
+		$filename = str_replace( [ '?', '[', ']', '/', '\\', '=', '<', '>', ':', ';', ',', "'", '"', '&', '$', '#', '*', '(', ')', '|', '~', '`', '!', '{', '}', '%', '+', chr( 0 ) ], '', (string) $filename );
+		return trim( preg_replace( '/[\r\n\t ]+/', ' ', $filename ) ?? '', '.- ' );
+	}
+}
+
+if ( ! function_exists( 'wp_unslash' ) ) {
+	function wp_unslash( $value ) {
+		return is_string( $value ) ? stripslashes( $value ) : $value;
+	}
+}
+
+if ( ! function_exists( '__' ) ) {
+	function __( $text, $domain = 'default' ) {
+		return $text;
+	}
+}
+
+if ( ! function_exists( 'wp_check_filetype' ) ) {
+	function wp_check_filetype( $filename, $mimes = null ): array {
+		foreach ( (array) $mimes as $ext_pattern => $mime ) {
+			if ( preg_match( '!\.(' . $ext_pattern . ')$!i', (string) $filename, $m ) ) {
+				return [ 'ext' => strtolower( $m[1] ), 'type' => $mime ];
+			}
+		}
+		return [ 'ext' => false, 'type' => false ];
+	}
+}
+
+if ( ! function_exists( 'esc_url_raw' ) ) {
+	function esc_url_raw( $url ): string {
+		$url = trim( (string) $url );
+		if ( preg_match( '#^\s*(javascript|vbscript|data)\s*:#i', $url ) ) {
+			return '';
+		}
+		return $url;
+	}
+}
+
+if ( ! function_exists( 'wp_kses_post' ) ) {
+	function wp_kses_post( $content ): string {
+		$content = (string) $content;
+		// Core's kses removes non-allowlisted TAGS but keeps the text between
+		// them — `<script>alert(1)</script>` becomes the bare text `alert(1)`.
+		// The stub must not sanitize harder than core, or it hides real output.
+		$content = preg_replace( '@</?\s*(script|style|iframe|frame|object|applet|embed|form|input|button|select|textarea|link|meta|base|svg)\b[^>]*>@i', '', $content ) ?? '';
+		// Event handlers: on*="…" / on*='…' / on*=bare.
+		$content = preg_replace( '/\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $content ) ?? '';
+		// Bad protocols. Core's wp_kses_bad_protocol() strips the scheme and keeps
+		// the rest of the attribute, so mirror that rather than dropping the whole
+		// attribute — a stub that sanitizes harder than core hides real leaks.
+		$content = preg_replace( '/(\b(?:href|src)\s*=\s*(["\']))\s*(?:javascript|vbscript|data)\s*:/i', '$1', $content ) ?? '';
+		return $content;
 	}
 }
 

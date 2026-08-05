@@ -5,8 +5,7 @@
  * Version:           1.0.0
  * Requires at least: 5.9
  * Requires PHP:      8.0
- * Requires Plugins:  jhmg-converter-divi-to-elementor
- * (Requires Plugins slug is a best guess — REVISIT at launch once wordpress.org assigns the real slug.)
+ * Requires Plugins:  jhmg-converter-for-divi-to-elementor
  * Author:            Lucas Lopvet
  * License:           GPLv2 or later
  * Text Domain:       jhmg-converter-divi-to-elementor-pro

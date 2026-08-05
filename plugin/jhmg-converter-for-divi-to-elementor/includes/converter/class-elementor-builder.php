@@ -396,7 +396,7 @@ class ElementorBuilder {
 			if ( $content === '' ) {
 				$content = sprintf( '<!-- Unconverted Divi module: %s -->', htmlspecialchars( $node->tag, ENT_QUOTES, 'UTF-8' ) );
 			}
-			$settings = [ 'html' => $this->close_html_comments( $content ) ];
+			$settings = [ 'html' => $this->close_html_comments( $this->sanitize_html( $content, $node->tag ) ) ];
 		}
 
 		$this->apply_spacing( $settings, $node );
@@ -656,7 +656,7 @@ class ElementorBuilder {
 				];
 
 			case 'code':
-				return [ 'html' => $this->close_html_comments( $node->content ) ];
+				return [ 'html' => $this->close_html_comments( $this->sanitize_html( $node->content, $node->tag ) ) ];
 
 			case 'divider':
 				$s = [
@@ -863,8 +863,8 @@ class ElementorBuilder {
 			case 'team_member':
 				return [
 					'title'       => $node->attr( 'name' ),
-					'description' => $node->content,
-					'image'       => [ 'url' => $node->attr( 'image_url' ) ],
+					'description' => $this->sanitize_html( $node->content, $node->tag ),
+					'image'       => [ 'url' => esc_url_raw( $node->attr( 'image_url' ) ) ],
 				];
 
 			case 'pricing_tables':
@@ -878,8 +878,10 @@ class ElementorBuilder {
 				];
 
 			case 'signup':
-				$provider = $node->attr( 'provider' );
-				$title    = $node->attr( 'title' );
+				// Both values land inside an HTML comment, so strip anything that
+				// could terminate it (--> or a stray <) before interpolating.
+				$provider = $this->comment_safe( $node->attr( 'provider' ) );
+				$title    = $this->comment_safe( $node->attr( 'title' ) );
 				return [
 					'html' => sprintf(
 						'<!-- Email opt-in form%s%s — reconnect to your email provider after import. -->',
@@ -1001,7 +1003,7 @@ class ElementorBuilder {
 			$items = '';
 			foreach ( $table->children as $item ) {
 				if ( $item->tag === 'pricing_item' ) {
-					$items .= '<li>' . $item->content . '</li>';
+					$items .= '<li>' . $this->sanitize_html( $item->content, $item->tag ) . '</li>';
 				}
 			}
 
@@ -1023,7 +1025,7 @@ class ElementorBuilder {
 				$html .= '<ul>' . $items . '</ul>';
 			}
 			if ( $btn_text !== '' ) {
-				$html .= '<a href="' . htmlspecialchars( $btn_url, ENT_QUOTES, 'UTF-8' ) . '" class="et-btn">'
+				$html .= '<a href="' . htmlspecialchars( esc_url_raw( $btn_url ), ENT_QUOTES, 'UTF-8' ) . '" class="et-btn">'
 					. htmlspecialchars( $btn_text, ENT_QUOTES, 'UTF-8' ) . '</a>';
 			}
 			$html .= '</div>';
@@ -1111,6 +1113,153 @@ class ElementorBuilder {
 	}
 
 	/**
+	 * Sanitize imported markup before it becomes an Elementor html-widget value.
+	 *
+	 * Everything inside a Divi export is untrusted: the JSON is an uploaded file,
+	 * and its Code modules carry whatever markup the source site's author wrote.
+	 * Storing that verbatim in _elementor_data would let an import inject script
+	 * into every page view, so it is filtered down to WordPress's standard post
+	 * allowlist — no <script>, <style>, <iframe>, <form>, no on* handlers, no
+	 * javascript: URLs. When the source really did contain one of those, a report
+	 * warning tells the user which module needs rebuilding by hand.
+	 *
+	 * @param string $context Divi module tag, used in the warning message.
+	 */
+	private function sanitize_html( string $html, string $context ): string {
+		if ( $html === '' ) {
+			return '';
+		}
+
+		if ( $this->has_unsafe_markup( $html ) ) {
+			$this->warnings[ 'unsafe_html_' . $context ] = sprintf(
+				'Scripts, styles, iframes or event handlers were removed from a Divi "%s" module during conversion. Re-add that content in Elementor if you still need it.',
+				$context
+			);
+		}
+
+		// Drop script/style elements *with their contents* before kses. On its own
+		// wp_kses_post() removes the tags but keeps what sat between them, which
+		// would dump the script's source onto the page as visible text — inert,
+		// but it looks like a broken conversion to the user.
+		$html = preg_replace(
+			[
+				'#<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>#si',
+				'#<\s*(script|style)\b[^>]*>.*$#si',
+			],
+			'',
+			$html
+		) ?? '';
+
+		return wp_kses_post( $html );
+	}
+
+	/**
+	 * Make an untrusted Divi attribute safe to interpolate as a single CSS
+	 * declaration value. Removing ; { } (and markup characters) means the value
+	 * cannot terminate its own declaration, so it can never add a second property
+	 * or escape the rule block the converter wraps it in. Backslashes go too —
+	 * CSS escape sequences are a way to spell those characters indirectly.
+	 */
+	private function css_value( string $value ): string {
+		return trim( str_replace( [ ';', '{', '}', '<', '>', '\\' ], '', $value ) );
+	}
+
+	/** Make an untrusted attribute safe to interpolate inside an HTML comment. */
+	private function comment_safe( string $value ): string {
+		return str_replace( [ '-->', '<', '>' ], '', sanitize_text_field( $value ) );
+	}
+
+	/** True when $html contains a construct wp_kses_post() will strip. */
+	private function has_unsafe_markup( string $html ): bool {
+		return (bool) preg_match( '#<\s*/?\s*(script|style|iframe|frame|object|embed|applet|form|input|button|select|textarea|link|meta|base|svg)\b#i', $html )
+			|| (bool) preg_match( '#\son[a-z]+\s*=#i', $html )
+			|| (bool) preg_match( '#(javascript|vbscript)\s*:#i', $html );
+	}
+
+	/**
+	 * Sanitize imported CSS before it becomes an Elementor custom_css value.
+	 *
+	 * Elementor renders custom_css inside a <style> block on the frontend, so an
+	 * imported rule set must not be able to close that block, pull in a remote
+	 * stylesheet, or reach any of the legacy CSS-executes-script vectors. Braces
+	 * are balanced last so a crafted value cannot escape the selector scope
+	 * Elementor wraps it in.
+	 */
+	private function sanitize_css( string $css ): string {
+		if ( $css === '' ) {
+			return '';
+		}
+
+		$clean = preg_replace(
+			[
+				// Paired elements go with their contents — dropping only the tags
+				// would leave the script body sitting in the stylesheet as text.
+				'#<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>#si',
+				'#<\s*(script|style)\b[^>]*>.*$#si', // …and the unclosed form.
+				'#<[^>]*>#',                    // any other markup, </style> included
+				'#<#',                          // and a bare < that never opened a tag
+				'#@import\b[^;}]*;?#i',         // remote stylesheet pulls
+				'#expression\s*\(#i',           // legacy IE script-in-CSS
+				'#behaviou?r\s*:[^;}]*;?#i',    // IE .htc bindings
+				'#-moz-binding\s*:[^;}]*;?#i',  // legacy Gecko XBL
+				'#(javascript|vbscript)\s*:#i', // script URLs inside url()
+			],
+			'',
+			$css
+		) ?? '';
+
+		if ( $clean !== $css ) {
+			$this->warnings['unsafe_css'] = 'Unsafe declarations (markup, @import or script URLs) were removed from imported custom CSS.';
+		}
+
+		return $this->balance_braces( $clean );
+	}
+
+	/**
+	 * Sanitize a bare CSS declaration list (Divi's custom_css_main_element),
+	 * which the converter wraps in its own `selector { … }` block.
+	 *
+	 * A declaration list has no braces of its own, so unlike sanitize_css() this
+	 * does not balance them — it removes them. Balancing a payload like
+	 * "color:red} body{display:none" would merely rearrange it into a nested
+	 * block inside the wrapper; stripping leaves it as inert text in one value.
+	 */
+	private function sanitize_css_declarations( string $css ): string {
+		$clean = str_replace( [ '{', '}' ], '', $this->sanitize_css( $css ) );
+
+		if ( $clean !== $css && $css !== '' ) {
+			$this->warnings['unsafe_css'] = 'Unsafe declarations (markup, @import or script URLs) were removed from imported custom CSS.';
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Drop unmatched closing braces and append any missing ones, so a rule set
+	 * cannot break out of the scope Elementor wraps custom_css in.
+	 */
+	private function balance_braces( string $css ): string {
+		$depth  = 0;
+		$out    = '';
+		$length = strlen( $css );
+
+		for ( $i = 0; $i < $length; $i++ ) {
+			$char = $css[ $i ];
+			if ( $char === '}' ) {
+				if ( $depth === 0 ) {
+					continue; // Unmatched — would escape the wrapping selector.
+				}
+				$depth--;
+			} elseif ( $char === '{' ) {
+				$depth++;
+			}
+			$out .= $char;
+		}
+
+		return $depth > 0 ? $out . str_repeat( '}', $depth ) : $out;
+	}
+
+	/**
 	 * Ensure every HTML comment opened with <!-- is closed with -->.
 	 * An unclosed <!-- in an html widget causes WordPress's do_shortcode()
 	 * to treat everything after it as comment content and skip all shortcodes.
@@ -1129,11 +1278,16 @@ class ElementorBuilder {
 	 * module_class → _css_classes. Applies to any element type.
 	 */
 	private function apply_identity( array &$settings, DiviNode $node ): void {
-		$id = $node->attr( 'module_id' );
+		// Both land in rendered HTML attributes, so keep them to the characters a
+		// CSS identifier may contain — nothing that could close the attribute.
+		$id = sanitize_html_class( $node->attr( 'module_id' ) );
 		if ( $id !== '' ) {
 			$settings['_element_id'] = $id;
 		}
-		$class = $node->attr( 'module_class' );
+		$class = implode(
+			' ',
+			array_filter( array_map( 'sanitize_html_class', preg_split( '/\s+/', $node->attr( 'module_class' ) ) ?: [] ) )
+		);
 		if ( $class !== '' ) {
 			$settings['_css_classes'] = $class;
 		}
@@ -1155,12 +1309,12 @@ class ElementorBuilder {
 	 *                           Empty string targets the element itself.
 	 */
 	private function apply_custom_css( array &$settings, DiviNode $node, string $raw_inner = '' ): void {
-		$css = $node->attr( 'custom_css_free_form' );
+		$css = $this->sanitize_css( $node->attr( 'custom_css_free_form' ) );
 		if ( $css !== '' ) {
 			$settings['custom_css'] = $this->append_css( $settings['custom_css'] ?? '', $css );
 			return;
 		}
-		$raw = $node->attr( 'custom_css_main_element' );
+		$raw = $this->sanitize_css_declarations( $node->attr( 'custom_css_main_element' ) );
 		if ( $raw !== '' ) {
 			// When a column uses flex-direction:row, two Elementor defaults fight back:
 			// (1) .elementor-widget-wrap has flex-direction:column, and
@@ -1635,25 +1789,25 @@ class ElementorBuilder {
 		// Paragraph color.
 		$color = $node->attr( 'text_text_color' );
 		if ( $color !== '' ) {
-			$para_props .= "    color: {$color};\n";
+			$para_props .= "    color: {$this->css_value( $color )};\n";
 		}
 
 		// Paragraph font size.
 		$size = $node->attr( 'text_font_size' );
 		if ( $size !== '' ) {
-			$para_props .= "    font-size: {$size};\n";
+			$para_props .= "    font-size: {$this->css_value( $size )};\n";
 		}
 
 		// Paragraph line height.
 		$lh = $node->attr( 'text_line_height' );
 		if ( $lh !== '' ) {
-			$para_props .= "    line-height: {$lh};\n";
+			$para_props .= "    line-height: {$this->css_value( $lh )};\n";
 		}
 
 		// Paragraph letter spacing.
 		$ls = $node->attr( 'text_letter_spacing' );
 		if ( $ls !== '' ) {
-			$para_props .= "    letter-spacing: {$ls};\n";
+			$para_props .= "    letter-spacing: {$this->css_value( $ls )};\n";
 		}
 
 		$blocks = [];
@@ -1712,26 +1866,26 @@ class ElementorBuilder {
 		$props = '';
 		$color = $node->attr( "{$prefix}_text_color" );
 		if ( $color !== '' ) {
-			$props .= "    color: {$color};\n";
+			$props .= "    color: {$this->css_value( $color )};\n";
 		}
 		$size = $node->attr( "{$prefix}_font_size" );
 		if ( $size !== '' ) {
-			$props .= "    font-size: {$size};\n";
+			$props .= "    font-size: {$this->css_value( $size )};\n";
 		}
 		$font_str = $node->attr( "{$prefix}_font" );
 		if ( $font_str !== '' ) {
 			$font = $this->parse_divi_font( $font_str );
 			if ( $font['family'] !== '' ) {
-				$props .= "    font-family: '{$font['family']}';\n";
+				$props .= "    font-family: '{$this->css_value( $font['family'] )}';\n";
 			}
 			if ( $font['weight'] !== '' && is_numeric( $font['weight'] ) ) {
 				$props .= "    font-weight: {$font['weight']};\n";
 			}
 			if ( $font['style'] !== 'normal' ) {
-				$props .= "    font-style: {$font['style']};\n";
+				$props .= "    font-style: {$this->css_value( $font['style'] )};\n";
 			}
 			if ( $font['transform'] !== 'none' ) {
-				$props .= "    text-transform: {$font['transform']};\n";
+				$props .= "    text-transform: {$this->css_value( $font['transform'] )};\n";
 			}
 		}
 		$align = $node->attr( "{$prefix}_text_align" );
@@ -1740,7 +1894,7 @@ class ElementorBuilder {
 		}
 		$lh = $node->attr( "{$prefix}_line_height" );
 		if ( $lh !== '' ) {
-			$props .= "    line-height: {$lh};\n";
+			$props .= "    line-height: {$this->css_value( $lh )};\n";
 		}
 		return $props;
 	}

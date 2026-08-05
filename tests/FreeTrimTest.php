@@ -19,7 +19,7 @@ class FreeTrimTest extends TestCase {
     }
 
     private function free_dir(): string {
-        return dirname( __DIR__ ) . '/plugin/jhmg-converter-divi-to-elementor/';
+        return dirname( __DIR__ ) . '/plugin/jhmg-converter-for-divi-to-elementor/';
     }
 
     // -----------------------------------------------------------------------
@@ -156,7 +156,11 @@ class FreeTrimTest extends TestCase {
         $this->assertCount( 1, $results );
         $this->assertFalse( $results[0]['success'] );
         $this->assertStringContainsString( 'Pro add-on', $results[0]['error'] );
-        $this->assertStringContainsString( 'divi-to-elementor?utm', $results[0]['error'] );
+        // The upsell URL is no longer part of the parser message — AdminPage
+        // appends it when it renders the notice. See the constant's docblock:
+        // an escapable `&` in the message would break the identity comparison
+        // that routes this failure to the notice path.
+        $this->assertStringNotContainsString( '&', $results[0]['error'] );
     }
 
     // -----------------------------------------------------------------------
@@ -173,11 +177,14 @@ class FreeTrimTest extends TestCase {
     // -----------------------------------------------------------------------
 
     public function test_tb_rejection_error_exactly_matches_parser_constant_used_for_notice_routing(): void {
-        // The constant must be public (AdminPage reads it) and self-contained
-        // (message + upsell URL).
+        // The constant must be public (AdminPage reads it) and must survive
+        // esc_html() unchanged — the parser throws esc_html( CONST ), so any
+        // escapable character in it would silently break the identity match
+        // below and send Theme Builder rejections down the generic "Failed"
+        // path instead of the upsell notice.
         $message = DiviParser::THEME_BUILDER_PRO_MESSAGE;
         $this->assertStringContainsString( 'Theme Builder exports require the Pro add-on', $message );
-        $this->assertStringContainsString( 'divi-to-elementor?utm_source=plugin&utm_medium=upsell', $message );
+        $this->assertSame( $message, esc_html( $message ), 'the constant must be escape-stable' );
 
         // BatchImporter propagates the parser's message verbatim into the failed
         // result — the exact-match routing in AdminPage::handle_import() relies
@@ -195,8 +202,16 @@ class FreeTrimTest extends TestCase {
     public function test_admin_notice_roundtrip_renders_error_banner_with_upsell_and_is_consumed(): void {
         $page = new \DiviElementorConverter\Admin\AdminPage();
 
+        // Mirror what handle_import() now queues: the parser's message plus the
+        // upsell URL, which AdminPage appends rather than the constant carrying.
         $set = new ReflectionMethod( $page, 'set_notice' );
-        $set->invoke( $page, 'error', DiviParser::THEME_BUILDER_PRO_MESSAGE );
+        $set->invoke(
+            $page,
+            'error',
+            DiviParser::THEME_BUILDER_PRO_MESSAGE
+                . ' It imports headers and footers as Elementor templates — '
+                . \DiviElementorConverter\Admin\AdminPage::PRO_UPSELL_URL
+        );
 
         $render = new ReflectionMethod( $page, 'render_notice' );
 
